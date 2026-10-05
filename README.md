@@ -179,6 +179,8 @@ docs/                → 架构图与数据流文档
 
 ## 相关文档
 
+- [OpenSERP 联网搜索操作指南](docs/web-search.md) — Agent 原生 `web_search`，默认关闭；固定版本部署、配置、验收、排障与回滚
+
 - [架构图（drawio + mermaid）](docs/architecture.md) — 系统总览、消息流程、插件安全模型
 - [数据流说明](docs/data-flow.md) — 消息 / 意图 / 工具调用 / 插件 / 记忆压缩全链路
 - [贡献准则](CONTRIBUTING.md) — 想给我添砖加瓦的话，先看这份

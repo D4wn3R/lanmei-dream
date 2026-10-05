@@ -156,6 +156,7 @@ func (s *ChatService) withCaller(ctx context.Context, req *llm.ChatRequest) cont
 	return tool.WithCaller(ctx, tool.CallerIdentity{
 		Platform:       req.Platform,
 		PlatformUserID: req.PlatformUserID,
+		GroupID:        req.GroupID,
 	})
 }
 
@@ -252,6 +253,10 @@ func (s *ChatService) assembleContext(ctx context.Context, req *llm.ChatRequest)
 		}
 	}
 	msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: systemContent})
+	// 先保守声明不可用；仅在实际成功绑定后替换为联网规则，覆盖两种 Prompt 来源。
+	if s.hasWebSearch() {
+		msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: searchUnavailableRule})
+	}
 
 	// 注入表情情绪流滑动窗口（MoodWindow.Snapshot）：给出最近发表情的情绪与间隔轮数，
 	// 让 LLM 据此自主控制发图节奏（别刷屏、别重复相近情绪，也别完全不发）。可选。
@@ -442,6 +447,13 @@ func (s *ChatService) assembleContext(ctx context.Context, req *llm.ChatRequest)
 //
 // 降级策略：绑定工具失败时回退为普通 Chat 调用（不使用工具）。
 func (s *ChatService) chatWithToolLoop(ctx context.Context, req *llm.ChatRequest, einoClient llm.EinoCapable) (*llm.ChatResponse, error) {
+	if s.hasWebSearch() {
+		resp, err := s.chatWithSearchTools(ctx, req, einoClient, nil)
+		if err == nil {
+			s.asyncStoreAndCompress(ctx, req.UserID, req.GroupID, req.Messages[len(req.Messages)-1].Content, nil)
+		}
+		return resp, err
+	}
 	// 注入调用者平台身份，工具 handler 通过 tool.CallerFrom 读取
 	ctx = s.withCaller(ctx, req)
 	toolInfos := s.toolReg.ToolInfos()

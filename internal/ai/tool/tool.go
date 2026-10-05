@@ -33,6 +33,8 @@ type CallerIdentity struct {
 	Platform string
 	// PlatformUserID 发送者平台用户 ID 字符串（如 QQ 号 "123456"）
 	PlatformUserID string
+	// GroupID 由宿主注入，模型不能指定限流/缓存作用域。
+	GroupID string
 }
 
 // callerKey ctx 键类型（私有，避免与其他包的 WithValue 键冲突）

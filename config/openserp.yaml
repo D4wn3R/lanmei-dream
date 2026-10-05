@@ -1,0 +1,55 @@
+# 配置契约：OpenSERP 112593b8e17c084f3e9943b8fd9861c6570feca0。
+# 仅供内网，不能将未认证的搜索/浏览器 API 暴露到公网。
+server:
+  host: 0.0.0.0
+  port: 7000
+  debug: false
+  verbose: false
+  raw_requests: false
+  insecure: false
+app:
+  log_format: json
+  log_level: error
+  timeout: 4
+  head: false
+  leave_head: false
+  block_resources: image,font,css,media
+  block_trackers: true
+  max_processes: 2
+  idle_ttl: 1m
+  mega_timeout: 8s
+extract:
+  enabled: false
+proxies:
+  allow_request_proxy_url: false
+  lanes:
+    enabled: false
+cache:
+  # 禁用上游跨会话缓存，由蓝妹按可信 scope 管理短期缓存。
+  ttl_seconds: 0
+  max_size: 256
+resilience:
+  max_retries: 0
+  allow_endpoint_fallback: false
+cors:
+  enabled: false
+captcha:
+  solver_enabled: false
+google:
+  rate_requests: 12
+  rate_burst: 2
+yandex:
+  rate_requests: 12
+  rate_burst: 2
+baidu:
+  rate_requests: 12
+  rate_burst: 2
+bing:
+  rate_requests: 12
+  rate_burst: 2
+duckduckgo:
+  rate_requests: 12
+  rate_burst: 2
+ecosia:
+  rate_requests: 12
+  rate_burst: 2

@@ -13,6 +13,7 @@ import (
 
 	"github.com/DaWesen/lanmei-dream/internal/ai"
 	"github.com/DaWesen/lanmei-dream/internal/ai/llm"
+	"github.com/DaWesen/lanmei-dream/internal/ai/tool"
 	"github.com/DaWesen/lanmei-dream/internal/database"
 	"github.com/DaWesen/lanmei-dream/internal/model"
 	"github.com/DaWesen/lanmei-dream/internal/topic"
@@ -117,6 +118,8 @@ func (p *RoleplayStreamPass) runStream(
 ) {
 	defer streamCancel()
 	defer close(segCh)
+	turn := tool.NewTurnState(streamCtx, tool.CallerIdentity{Platform: platform, PlatformUserID: senderID, GroupID: groupID})
+	streamCtx = tool.WithTurnState(streamCtx, turn)
 
 	req := &llm.ChatRequest{
 		Messages:       []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
@@ -125,6 +128,7 @@ func (p *RoleplayStreamPass) runStream(
 		GroupName:      groupID,
 		GroupID:        groupID,
 		PlatformUserID: senderID, // 平台用户 ID（conduit ctx.UserID），供工具调用身份注入
+		Platform:       platform,
 		TopicContext:   topicCtx,
 	}
 
@@ -160,16 +164,18 @@ func (p *RoleplayStreamPass) runStream(
 		// 空响应多为推理模型思考耗尽输出预算，重试时关闭思考（与 stream 层超限重试同思路）
 		retryDisableThinking := true
 		retryReq := &llm.ChatRequest{
-			Messages:         []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
-			UserID:           userID,
-			UserName:         nickname,
-			GroupName:        groupID,
-			GroupID:          groupID,
-			PlatformUserID:   senderID,
-			TopicContext:     topicCtx,
-			DisableThinking:  &retryDisableThinking,
+			Messages:        []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+			UserID:          userID,
+			UserName:        nickname,
+			GroupName:       groupID,
+			GroupID:         groupID,
+			PlatformUserID:  senderID,
+			Platform:        platform,
+			TopicContext:    topicCtx,
+			DisableThinking: &retryDisableThinking,
 		}
-		retryCtx, retryCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		turn.PrepareRetry()
+		retryCtx, retryCancel := context.WithTimeout(streamCtx, 30*time.Second)
 		retryResp, retryErr := p.Chat.ChatStream(retryCtx, retryReq, segCh)
 		retryCancel()
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {

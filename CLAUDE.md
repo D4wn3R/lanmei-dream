@@ -42,6 +42,7 @@ internal/
   gateway/           → 反向 WS 服务端 + OneBot 12/11 适配 + 连接管理 + 消息标准化
   infra/             → 基础设施生命周期（PG/pgvector + Redis + RustFS + zap）
   kb/                → 知识库：provider 抽象（local/feishu/sheet）、多路召回、隐式召回与工具
+  websearch/         → Agent 原生 OpenSERP 摘要检索、参数校验、限流与会话隔离缓存
   manager/           → 管理面板后端（Fiber API、认证、Conduit 控制平面、计费、审计、Trace）
   media/             → 多媒体 MIME 与 RustFS 对象存储封装
   model/             → 数据模型与事实/置信度合并逻辑
@@ -113,6 +114,8 @@ docs/                → 架构与数据流文档
 **群聊话题系统**：群聊不再全量回复。at 为精确强信号；其余提及由意图分析的提及判断按强/弱阈值分档；维护每群话题状态机（Active → Cooling → 归档，状态存 Redis 可重启恢复）、成员与消息窗口、回复配额（防刷屏）；话题外消息静默保存，冷却后归档为群记忆。
 
 **知识库**：provider 抽象（local 的 Markdown/CSV、飞书 Wiki、飞书表格），多路召回按权重合并（vector/fuzzy/time）；既做每轮对话的隐式召回注入，也提供 kb_search / kb_add 工具供 LLM 主动检索；新增 provider 在 kb.RegisterProvider 注册。
+
+**联网搜索**：`ai.web_search` 默认关闭，由 main 在 AI 初始化阶段直接注册 `web_search`，不经业务插件。`internal/websearch` 管理 OpenSERP HTTP 连接与关闭；`tool.TurnState` 管理单条消息预算/来源与重试证据。启用后流式决策轮缓冲正文，流式与非流式共用安全循环；最多两次搜索、五轮工具后一次空工具收尾，禁止原始 JSON 兜底。不抓网页正文、不自动永久存储搜索资料。配置、部署、验收及回滚见 `docs/web-search.md`。
 
 **插件与权限**：内置插件与 Wasm 插件共用同一注册表（同名 Wasm 优先）；插件经 PluginContext 注册 Pass/Pipeline/子树/命令/工具，行为树以 SubtreeRef 挂载（优先级最高）；Wasm 基于 Extism + wazero，走 WIT ABI，支持 /插件 安装 <url> 从 HTTPS 直链安装；授权用 Casbin RBAC，主体精确到插件安装实例，动作/角色为白名单，另有 Capability 资源配额与审计日志；插件持久化 KV 在 PostgreSQL。
 

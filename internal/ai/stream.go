@@ -60,6 +60,13 @@ func (s *ChatService) chatStreamWithToolLoop(
 	queryVec []float32,
 	lastMsgContent string,
 ) (*llm.ChatResponse, error) {
+	if s.hasWebSearch() {
+		resp, err := s.chatWithSearchTools(ctx, req, einoClient, segmentCh)
+		if err == nil {
+			s.asyncStoreAndCompress(ctx, req.UserID, req.GroupID, lastMsgContent, queryVec)
+		}
+		return resp, err
+	}
 	// 注入调用者平台身份，工具 handler 通过 tool.CallerFrom 读取
 	ctx = s.withCaller(ctx, req)
 	chatModel, err := s.getStreamChatModel(einoClient)

@@ -84,6 +84,7 @@ func Init() (*Config, error) {
 			v.Set(cfgKey, val)
 		}
 	}
+	applyWebSearchEnv(v)
 
 	pflag.CommandLine.VisitAll(func(f *pflag.Flag) {
 		if f.Name != "config" {
@@ -96,6 +97,11 @@ func Init() (*Config, error) {
 		return nil, fmt.Errorf("解析配置失败: %w", err)
 	}
 
+	if cfg.AI.WebSearch.Enabled {
+		if err := cfg.AI.WebSearch.Validate(); err != nil {
+			return nil, err
+		}
+	}
 	return &cfg, nil
 }
 
@@ -120,6 +126,7 @@ func initFlags() {
 }
 
 func setDefaults(v *viper.Viper) {
+	setWebSearchDefaults(v)
 	v.SetDefault("bot.nickname", "蓝妹")
 	v.SetDefault("bot.super_users", "")
 	v.SetDefault("bot.gateway.listen_addr", "0.0.0.0:8080")

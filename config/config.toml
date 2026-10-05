@@ -2,6 +2,25 @@
 # 环境变量前缀为 LANMEI_（如 LANMEI_AI_LLM_API_KEY），同名环境变量优先于本文件。
 # 各键的代码默认值见 internal/config/init.go 的 setDefaults。
 
+# Agent 原生联网工具（不是业务插件），部署验收后开启；详见 docs/web-search.md。
+[ai.web_search]
+enabled = true
+base_url = "http://openserp:7000"
+engines = ["bing", "baidu"]
+mode = "any"
+max_results = 5
+timeout_seconds = 10
+max_calls_per_turn = 2
+total_search_seconds = 15
+answer_reserve_seconds = 10
+max_concurrency = 2
+requests_per_minute_per_scope = 6
+burst_per_scope = 2
+cache_ttl_seconds = 120
+cache_max_entries = 256
+max_response_bytes = 1048576
+max_output_bytes = 16384
+
 [bot]
 # 机器人昵称；为空时代码回退为"蓝妹"
 nickname = "蓝妹"

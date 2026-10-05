@@ -29,6 +29,7 @@ import (
 	"github.com/DaWesen/lanmei-dream/internal/manager"
 	pluginpkg "github.com/DaWesen/lanmei-dream/internal/plugin"
 	"github.com/DaWesen/lanmei-dream/internal/topic"
+	"github.com/DaWesen/lanmei-dream/internal/websearch"
 	"go.uber.org/zap"
 )
 
@@ -153,10 +154,23 @@ func main() {
 	logger.Info("Prompt 系统就绪", zap.String("dir", cfg.Prompts.Dir))
 
 	var (
-		chatSvc *ai.ChatService
-		toolReg *tool.Registry
-		kbSvc   *kbpkg.Service
+		chatSvc   *ai.ChatService
+		toolReg   *tool.Registry
+		kbSvc     *kbpkg.Service
+		searchSvc *websearch.Service
 	)
+	// zap.Fatal 会直接退出进程，不执行 defer；部分初始化失败也必须关闭搜索资源。
+	startupFatal := func(message string, fields ...zap.Field) {
+		if searchSvc != nil {
+			searchSvc.Close()
+		}
+		logger.Fatal(message, fields...)
+	}
+	defer func() {
+		if searchSvc != nil {
+			searchSvc.Close()
+		}
+	}()
 	if llmClient != nil {
 		toolReg = tool.NewRegistry()
 		chatSvc = ai.NewChatService(llmClient, embedder, inf.MemStore, inf.DB, toolReg, logger)
@@ -164,26 +178,36 @@ func main() {
 			logger.Fatal("记忆相似度配置无效", zap.Error(err))
 		}
 		chatSvc.SetPromptManager(promptMgr)
+		if cfg.AI.WebSearch.Enabled {
+			searchSvc, err = websearch.NewService(ctx, cfg.AI.WebSearch, logger)
+			if err != nil {
+				startupFatal("联网搜索初始化失败", zap.Error(err))
+			}
+			if err := toolReg.Register(searchSvc.Tool()); err != nil {
+				startupFatal("注册联网搜索工具失败", zap.Error(err))
+			}
+			logger.Info("Agent 联网搜索工具已注册", zap.String("adapter", websearch.AdapterVersion))
+		}
 
 		// 知识库系统（provider 工厂注册 + 服务构建 + 工具注册 + 隐式召回注入）
 		if cfg.Knowledge.Enabled {
 			// 注册 provider 工厂（新增 provider 在此追加注册）
 			if err := kbpkg.RegisterProvider("local", local.New); err != nil {
-				logger.Fatal("注册 local provider 失败", zap.Error(err))
+				startupFatal("注册 local provider 失败", zap.Error(err))
 			}
 			if err := kbpkg.RegisterProvider("feishu", feishu.New); err != nil {
-				logger.Fatal("注册 feishu provider 失败", zap.Error(err))
+				startupFatal("注册 feishu provider 失败", zap.Error(err))
 			}
 			if err := kbpkg.RegisterProvider("sheet", sheet.New); err != nil {
-				logger.Fatal("注册 sheet provider 失败", zap.Error(err))
+				startupFatal("注册 sheet provider 失败", zap.Error(err))
 			}
 			kbSvc, err = kbpkg.NewService(ctx, &cfg.Knowledge, inf.DB.Orm, embedder, logger)
 			if err != nil {
-				logger.Fatal("知识库初始化失败", zap.Error(err))
+				startupFatal("知识库初始化失败", zap.Error(err))
 			}
 			if kbSvc != nil {
 				if err := kbSvc.RegisterTools(toolReg); err != nil {
-					logger.Fatal("注册知识库工具失败", zap.Error(err))
+					startupFatal("注册知识库工具失败", zap.Error(err))
 				}
 				chatSvc.SetKnowledge(kbSvc)
 				logger.Info("知识库系统就绪", zap.Int("bases", len(kbSvc.List())))
@@ -221,7 +245,7 @@ func main() {
 		Handler:     cmdSys.HelpHandler,
 		Order:       51, // 紧跟 /help（50）之后
 	}); err != nil {
-		logger.Fatal("注册帮助命令失败", zap.Error(err))
+		startupFatal("注册帮助命令失败", zap.Error(err))
 	}
 	// /help 别名：与 /帮助 同义，降低新用户使用门槛
 	if err := cmdSys.Register(command.Command{
@@ -230,7 +254,7 @@ func main() {
 		Handler:     cmdSys.HelpHandler,
 		Order:       50,
 	}); err != nil {
-		logger.Fatal("注册 help 命令失败", zap.Error(err))
+		startupFatal("注册 help 命令失败", zap.Error(err))
 	}
 
 	// 视觉理解服务（多模态图片描述，可选）
@@ -248,7 +272,7 @@ func main() {
 			Temperature: 0.2, // 描述任务用低温，更客观
 		})
 		if err != nil {
-			logger.Fatal("视觉理解模型初始化失败", zap.Error(err))
+			startupFatal("视觉理解模型初始化失败", zap.Error(err))
 		}
 		visionSvc = ai.NewVisionService(visionLLM.BaseModel(), logger)
 		logger.Info("视觉理解服务就绪", zap.String("model", visionModel))
@@ -275,13 +299,13 @@ func main() {
 
 	wasmManager, err := pluginpkg.NewWasmManager(&cfg.Plugin, inf.DB, pluginReg, authorizer, logger, nil)
 	if err != nil {
-		logger.Fatal("Wasm 插件管理器初始化失败", zap.Error(err))
+		startupFatal("Wasm 插件管理器初始化失败", zap.Error(err))
 	}
 	if err := cmdSys.Register(pluginpkg.NewWasmInstallCommand(ctx, wasmManager)); err != nil {
-		logger.Fatal("注册插件管理命令失败", zap.Error(err))
+		startupFatal("注册插件管理命令失败", zap.Error(err))
 	}
 	if err := wasmManager.LoadEnabled(ctx, pluginpkg.SystemPrincipal("startup")); err != nil {
-		logger.Fatal("恢复已启用 Wasm 插件失败", zap.Error(err))
+		startupFatal("恢复已启用 Wasm 插件失败", zap.Error(err))
 	}
 
 	// 内置业务插件：配置驱动注册（[plugin.builtins]）
@@ -298,7 +322,7 @@ func main() {
 	// 走独立 context，不占用消息级 20s 预算
 	bizReg.SetTurtleSoupTimeout(time.Duration(cfg.Bot.TurtleSoupTimeoutSeconds) * time.Second)
 	if err := bizReg.RegisterBuiltins(); err != nil {
-		logger.Fatal("内置业务插件注册失败", zap.Error(err))
+		startupFatal("内置业务插件注册失败", zap.Error(err))
 	}
 
 	// 表情情绪窗口（按群/私聊统计表情发送历史，注入提示词控制发表情节奏）
@@ -308,10 +332,10 @@ func main() {
 	}
 
 	if err := pluginReg.InitPlugins(ctx); err != nil {
-		logger.Fatal("插件初始化失败", zap.Error(err))
+		startupFatal("插件初始化失败", zap.Error(err))
 	}
 	if err := pluginReg.StartPlugins(ctx); err != nil {
-		logger.Fatal("插件启动失败", zap.Error(err))
+		startupFatal("插件启动失败", zap.Error(err))
 	}
 
 	// 插件可能注册了新的命令/工具，刷新意图分析器使其感知
@@ -331,7 +355,7 @@ func main() {
 			Commands:  cmdSys,
 		})
 		if err != nil {
-			logger.Fatal("管理面板初始化失败", zap.Error(err))
+			startupFatal("管理面板初始化失败", zap.Error(err))
 		}
 		// 从数据库加载 Provider 到运行时（DB 为空时保留 config.toml 兜底）
 		if err := mgr.LoadProviders(ctx); err != nil {
@@ -346,7 +370,7 @@ func main() {
 			chatSvc.SetUsageHook(hook)
 		}
 		if err := mgr.Start(ctx); err != nil {
-			logger.Fatal("管理面板启动失败", zap.Error(err))
+			startupFatal("管理面板启动失败", zap.Error(err))
 		}
 		logger.Info("管理面板就绪", zap.String("listen", cfg.Manager.ListenAddr))
 	}
@@ -356,6 +380,9 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		logger.Info("正在关闭...")
+		if searchSvc != nil {
+			searchSvc.Close()
+		}
 		pluginReg.StopPlugins(ctx)
 		if kbSvc != nil {
 			kbSvc.Close()

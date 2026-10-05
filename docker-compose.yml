@@ -3,6 +3,25 @@
 # 所有 ${VAR:-默认值} 均可用同目录 .env 覆盖（见 .env.example）。
 
 services:
+  # 可选 Agent 联网搜索；固定源码构建基线，不使用浮动 latest。
+  # 无宿主机端口映射、无 lanmei 强制依赖；启用步骤见 docs/web-search.md。
+  openserp:
+    image: ${OPENSERP_IMAGE:-lanmei-openserp:112593b8e17c084f3e9943b8fd9861c6570feca0}
+    build:
+      context: https://github.com/karust/openserp.git#112593b8e17c084f3e9943b8fd9861c6570feca0
+    profiles: ["websearch"]
+    restart: unless-stopped
+    init: true
+    command: ["serve", "-a", "0.0.0.0", "-p", "7000"]
+    volumes:
+      - ./config/openserp.yaml:/usr/src/app/config.yaml:ro
+    cpus: 2.0
+    mem_limit: 2g
+    shm_size: 256m
+    # 不以真实搜索作探活；停用镜像内置检查，部署时单独低频验收。
+    healthcheck:
+      test: ["NONE"]
+
   # PostgreSQL 18（pgvector 官方镜像）：业务数据与知识库向量检索，数据存 pgdata 卷。
   postgres:
     image: pgvector/pgvector:pg18
