@@ -1,7 +1,7 @@
-// Package intent 实现意图分析：在消息进入对话流程前用 LLM 分类并路由。
+// Package intent 实现意图分析：在消息进入对话流程前用意图判断适配器（LLM 或 Jev）分类并路由。
 //
 // 结果分为 chat（RAG 对话）、command（命令处理器）、tool（工具注册表）、
-// ignore（丢弃）四类；LLM 不可用或返回无效结果时统一降级为 chat。
+// ignore（丢弃）四类；适配器不可用或返回无效结果时统一降级为 chat。
 package intent
 
 import (
@@ -64,11 +64,12 @@ type JudgeContext struct {
 	Recent   []JudgeMessage // 最近对话（不含当前消息），用于指代消解
 }
 
-// Analyzer 通过 LLM 分析用户消息的意图。
-// 命令与工具列表注入 system prompt 供 LLM 语义匹配；Analyzer 只负责分类，
+// Analyzer 意图分析器：持有 JudgeAdapter 槽位（部署时配置选定 LLM 或 Jev 实现），
+// 只做公共逻辑——命令/工具列表缓存与刷新、调用超时包裹，判断逻辑委托给适配器。
+// 命令与工具列表随调用快照传给适配器供语义匹配；Analyzer 只负责分类，
 // 不执行命令或工具，执行由上层路由逻辑完成。
 type Analyzer struct {
-	llmClient llm.LLMClient
+	adapter   JudgeAdapter
 	mu        sync.RWMutex // 保护 commands/tools（运行时刷新与并发 Analyze 读写）
 	commands  []CommandDef
 	tools     []ToolDef
@@ -89,15 +90,15 @@ type ToolDef struct {
 	Description string
 }
 
-// NewAnalyzer 创建意图分析器；llmClient 为 nil 时 Analyze 降级返回 IntentChat。
-// timeout 为单次 LLM 调用超时（<=0 表示沿用父上下文）：意图分析只是路由前置步骤，
-// 给独立短超时可在 LLM 故障时快速降级，避免后续对话管线失去剩余时间。
-func NewAnalyzer(llmClient llm.LLMClient, commands []CommandDef, tools []ToolDef, timeout time.Duration) *Analyzer {
+// NewAnalyzer 创建意图分析器；adapter 为 nil 时 Analyze 降级返回 IntentChat。
+// timeout 为单次判断调用的总闸超时（<=0 表示沿用父上下文）：意图分析只是路由前置步骤，
+// 给独立短超时可在故障时快速降级，避免后续对话管线失去剩余时间。
+func NewAnalyzer(adapter JudgeAdapter, commands []CommandDef, tools []ToolDef, timeout time.Duration) *Analyzer {
 	return &Analyzer{
-		llmClient: llmClient,
-		commands:  commands,
-		tools:     tools,
-		timeout:   timeout,
+		adapter:  adapter,
+		commands: commands,
+		tools:    tools,
+		timeout:  timeout,
 	}
 }
 
@@ -115,31 +116,57 @@ func (a *Analyzer) UpdateTools(tools []ToolDef) {
 	a.mu.Unlock()
 }
 
-// Analyze 分析用户消息的意图；群聊传入 judgeCtx 时，同一次 LLM 调用顺便完成
+// Analyze 分析用户消息的意图；群聊传入 judgeCtx 时，适配器在同一次判断中顺便完成
 // "是否在跟机器人说话"的提及判断（私聊传 nil）。
-// LLM 未配置、调用失败或返回无效结果时均降级为 IntentChat，
+// 适配器未配置、调用失败或返回无效结果时均降级为 IntentChat，
 // 保证意图分析故障不影响对话服务。
 func (a *Analyzer) Analyze(ctx context.Context, userMsg string, judgeCtx *JudgeContext) (*Result, error) {
-	if a.llmClient == nil {
-		// LLM 未配置，降级为 chat
+	if a.adapter == nil {
+		// 适配器未配置，降级为 chat
 		return &Result{Intent: IntentChat, Confidence: 1.0}, nil
 	}
 
-	prompt := a.buildPrompt(judgeCtx)
+	// 读锁内拷贝命令/工具列表，避免与运行时刷新（UpdateCommands/UpdateTools）并发读写竞争
+	a.mu.RLock()
+	commands := append([]CommandDef(nil), a.commands...)
+	tools := append([]ToolDef(nil), a.tools...)
+	a.mu.RUnlock()
+
+	adaptCtx := ctx
+	cancel := func() {}
+	if a.timeout > 0 {
+		adaptCtx, cancel = context.WithTimeout(ctx, a.timeout)
+		defer cancel()
+	}
+
+	return a.adapter.Judge(adaptCtx, userMsg, judgeCtx, commands, tools)
+}
+
+// LLMAdapter 基于生成式 LLM 的意图判断适配器（原有路径原样迁移）。
+type LLMAdapter struct {
+	client llm.LLMClient
+}
+
+// NewLLMAdapter 创建 LLM 适配器；client 为 nil 时 Judge 降级返回 IntentChat。
+func NewLLMAdapter(client llm.LLMClient) *LLMAdapter {
+	return &LLMAdapter{client: client}
+}
+
+// Judge 用一次 chat completions 调用同时完成意图分类与群聊提及判断，
+// 响应 JSON 经 parseResult 容错解析。
+func (a *LLMAdapter) Judge(ctx context.Context, userMsg string, judgeCtx *JudgeContext, commands []CommandDef, tools []ToolDef) (*Result, error) {
+	if a.client == nil {
+		return &Result{Intent: IntentChat, Confidence: 1.0}, nil
+	}
+
+	prompt := buildIntentPrompt(commands, tools, judgeCtx)
 	user := userMsg
 	if judgeCtx != nil && len(judgeCtx.Recent) > 0 {
 		// 注入最近对话供 LLM 做指代消解（"那你呢"中的"你"等）
 		user = formatJudgeUser(userMsg, judgeCtx.Recent)
 	}
 
-	llmCtx := ctx
-	cancel := func() {}
-	if a.timeout > 0 {
-		llmCtx, cancel = context.WithTimeout(ctx, a.timeout)
-		defer cancel()
-	}
-
-	resp, err := a.llmClient.Chat(llmCtx, &llm.ChatRequest{
+	resp, err := a.client.Chat(ctx, &llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: prompt},
 			{Role: llm.RoleUser, Content: user},
@@ -171,16 +198,10 @@ func formatJudgeUser(userMsg string, recent []JudgeMessage) string {
 	return sb.String()
 }
 
-// buildPrompt 构建意图分析的 system prompt：命令/工具列表按语义描述动态注入，
+// buildIntentPrompt 构建意图分析的 system prompt：命令/工具列表按语义描述动态注入，
 // 群聊时额外注入提及判断规则（judgeCtx 非 nil）。
 // 按语义描述匹配而非关键词匹配，是意图识别准确率的关键。
-func (a *Analyzer) buildPrompt(judgeCtx *JudgeContext) string {
-	// 读锁内拷贝命令/工具列表，避免与运行时刷新（UpdateCommands/UpdateTools）并发读写竞争
-	a.mu.RLock()
-	commands := append([]CommandDef(nil), a.commands...)
-	tools := append([]ToolDef(nil), a.tools...)
-	a.mu.RUnlock()
-
+func buildIntentPrompt(commands []CommandDef, tools []ToolDef, judgeCtx *JudgeContext) string {
 	var sb strings.Builder
 
 	sb.WriteString(`你是一个意图分类器，群聊消息同时判断"是否在跟机器人说话"。根据用户消息判断其意图，返回 JSON 格式结果。
@@ -189,7 +210,7 @@ func (a *Analyzer) buildPrompt(judgeCtx *JudgeContext) string {
 - "chat": 闲聊、提问、角色扮演对话
 - "command": 用户想执行某个操作/命令
 - "tool": 用户想使用某个工具/功能
-- "ignore": 无需回复的内容（纯表情、系统通知、无意义重复等）
+- "ignore": 无需回复的内容（纯表情、系统通知、无意义重复等），以及用户让机器人闭嘴/别说话/停止发言（机器人应静默不回应；这类话不是要执行命令）
 
 ## 可用命令
 `)
@@ -262,6 +283,7 @@ mention_evidence 规则：
 群聊 用户: "蓝妹在吗" → {"intent":"chat","command":"","tool":"","confidence":0.95,"is_talking_to_bot":true,"mention_role":"vocative","mention_confidence":0.98,"mention_evidence":"用户直接称呼蓝妹"}
 群聊 用户: "那你呢" → {"intent":"chat","command":"","tool":"","confidence":0.85,"is_talking_to_bot":true,"mention_role":"relay","mention_confidence":0.7,"mention_evidence":"指代消解：上文 bot 发言后用户说'那你呢'，'你'指机器人"}
 群聊 用户: "你们知道蓝妹吗" → {"intent":"chat","command":"","tool":"","confidence":0.8,"is_talking_to_bot":false,"mention_role":"relay","mention_confidence":0.9}
+群聊 用户: "蓝妹闭嘴，别说话了" → {"intent":"ignore","command":"","tool":"","confidence":0.9,"is_talking_to_bot":true,"mention_role":"imperative_object","mention_confidence":0.95}
 `)
 
 	return sb.String()

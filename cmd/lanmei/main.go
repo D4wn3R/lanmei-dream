@@ -10,6 +10,7 @@ import (
 
 	"github.com/DaWesen/lanmei-dream/internal/ai"
 	"github.com/DaWesen/lanmei-dream/internal/ai/embedding"
+	"github.com/DaWesen/lanmei-dream/internal/ai/intent"
 	"github.com/DaWesen/lanmei-dream/internal/ai/llm"
 	"github.com/DaWesen/lanmei-dream/internal/ai/memory"
 	"github.com/DaWesen/lanmei-dream/internal/ai/prompt"
@@ -290,10 +291,26 @@ func main() {
 		AccessToken: cfg.Bot.Gateway.AccessToken,
 	}, logger, nil)
 
+	// 意图判断适配器：[ai.intent_judge].api_key 非空即启用 Jev（TypeSafe System-1 决策模型，
+	// 经 OpenRouter 决策端点调用），否则走 LLM 路径（judge 传 nil，由 bot 内部回退）。
+	var intentJudge intent.JudgeAdapter
+	if cfg.AI.IntentJudge.APIKey != "" {
+		intentJudge = intent.NewJevAdapter(intent.JevOptions{
+			BaseURL: cfg.AI.IntentJudge.BaseURL,
+			APIKey:  cfg.AI.IntentJudge.APIKey,
+			Model:   cfg.AI.IntentJudge.Model,
+			Timeout: time.Duration(cfg.AI.IntentJudge.TimeoutSeconds) * time.Second,
+		}, llmClient, logger)
+		logger.Info("意图判断适配器",
+			zap.String("adapter", "jev"), zap.String("model", cfg.AI.IntentJudge.Model))
+	} else {
+		logger.Info("意图判断适配器", zap.String("adapter", "llm"))
+	}
+
 	b := bot.New(&cfg.Bot, cmdSys, chatSvc, inf.DB, inf.StateStore, llmClient, pluginReg, gwServer, toolReg, logger, &bot.MediaDeps{
 		Store:  inf.ObjectStore,
 		Vision: visionSvc,
-	}, topicMgr)
+	}, topicMgr, intentJudge)
 
 	gwServer.SetHandler(b)
 

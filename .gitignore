@@ -26,3 +26,4 @@ docs/*.csv
 # 本地开发辅助（spec 文档 / e2e 临时脚本）
 /.trae/
 /scripts/
+/.zcodeignore

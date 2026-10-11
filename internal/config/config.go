@@ -150,6 +150,8 @@ type RedisConfig struct {
 // AIConfig AI 相关配置
 type AIConfig struct {
 	WebSearch WebSearchConfig `mapstructure:"web_search"`
+	// IntentJudge 意图判断适配器配置（api_key 非空即启用 Jev，见 intent_judge.go）
+	IntentJudge IntentJudgeConfig `mapstructure:"intent_judge"`
 	// LLM 配置（OpenAI 兼容 API）
 	LLMBaseURL     string  `mapstructure:"llm_base_url"`
 	LLMAPIKey      string  `mapstructure:"llm_api_key"`
