@@ -55,6 +55,10 @@ func Init() (*Config, error) {
 		"LANMEI_AI_LLM_MODEL":                    "ai.llm_model",
 		"LANMEI_AI_LLM_MAX_TOKENS":               "ai.llm_max_tokens",
 		"LANMEI_AI_LLM_TEMPERATURE":              "ai.llm_temperature",
+		"LANMEI_AI_INTENT_JUDGE_API_KEY":         "ai.intent_judge.api_key",
+		"LANMEI_AI_INTENT_JUDGE_BASE_URL":        "ai.intent_judge.base_url",
+		"LANMEI_AI_INTENT_JUDGE_MODEL":           "ai.intent_judge.model",
+		"LANMEI_AI_INTENT_JUDGE_TIMEOUT_SECONDS": "ai.intent_judge.timeout_seconds",
 		"LANMEI_AI_EMBEDDING_API_KEY":            "ai.embedding_api_key",
 		"LANMEI_AI_EMBEDDING_BASE_URL":           "ai.embedding_base_url",
 		"LANMEI_AI_EMBEDDING_MODEL":              "ai.embedding_model",
@@ -127,6 +131,7 @@ func initFlags() {
 
 func setDefaults(v *viper.Viper) {
 	setWebSearchDefaults(v)
+	setIntentJudgeDefaults(v)
 	v.SetDefault("bot.nickname", "蓝妹")
 	v.SetDefault("bot.super_users", "")
 	v.SetDefault("bot.gateway.listen_addr", "0.0.0.0:8080")

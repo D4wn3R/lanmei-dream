@@ -187,14 +187,15 @@ type MediaDeps struct {
 // New 创建 Bot 实例，初始化 Conduit 引擎、行为树和插件系统。
 //
 // store 为 Conduit 状态存储（由 infra 包提供，RedisStore 用于生产，MemoryStore 用于测试）
-// llmClient 为 LLM 客户端，用于意图分析（nil 时降级为纯聊天路由）
+// llmClient 为 LLM 客户端（构造默认 LLM 意图适配器用；nil 时该适配器降级为纯聊天路由）
+// judge 为意图判断适配器（main 按配置注入 Jev 或 nil；nil 时回退 NewLLMAdapter(llmClient)）
 // pluginReg 为插件注册表（nil 时跳过插件初始化）
 // gwServer 为网关服务端（反向 WS，由 gateway 包提供）
 // mediaDeps 为多媒体处理依赖（nil 时媒体管线降级，仅记录）
 // topicMgr 为群聊话题管理器（nil 时 topic 系统未启用，群聊退化为全量意图分析）
 //
 // 返回：完成核心管线注册、行为树构建与动态管理员加载的 Bot 实例。
-func New(cfg *config.BotConfig, cmdSys *command.System, chatSvc *ai.ChatService, db *database.DB, store conduit.StateStore, llmClient llm.LLMClient, pluginReg *pluginpkg.Registry, gwServer *gateway.Server, toolReg *tool.Registry, logger *zap.Logger, mediaDeps *MediaDeps, topicMgr *topic.Manager) *Bot {
+func New(cfg *config.BotConfig, cmdSys *command.System, chatSvc *ai.ChatService, db *database.DB, store conduit.StateStore, llmClient llm.LLMClient, pluginReg *pluginpkg.Registry, gwServer *gateway.Server, toolReg *tool.Registry, logger *zap.Logger, mediaDeps *MediaDeps, topicMgr *topic.Manager, judge intent.JudgeAdapter) *Bot {
 	nick := cfg.NickName
 	if nick == "" {
 		nick = "蓝妹"
@@ -210,13 +211,16 @@ func New(cfg *config.BotConfig, cmdSys *command.System, chatSvc *ai.ChatService,
 		conduit.WithTracing(true),
 	)
 
-	// 意图分析器（LLM 不可用时自动降级为 IntentChat）。
-	// intentTimeout：意图分析独立短超时（默认 8s），LLM 故障时快速降级，
+	// 意图判断适配器：main 按配置注入（Jev）；nil 时回退 LLM 路径（LLM 不可用时自动降级为 IntentChat）。
+	// intentTimeout：意图分析独立短超时（默认 8s），故障时快速降级，
 	// 避免吃满整条消息的 20s 预算触发"迷糊"兜底回复。
+	if judge == nil {
+		judge = intent.NewLLMAdapter(llmClient)
+	}
 	intentTimeout := time.Duration(cfg.IntentTimeoutSeconds) * time.Second
 	cmdDefs := BuildIntentCommands(cmdSys)
 	toolDefs := BuildIntentTools(toolReg)
-	analyzer := intent.NewAnalyzer(llmClient, cmdDefs, toolDefs, intentTimeout)
+	analyzer := intent.NewAnalyzer(judge, cmdDefs, toolDefs, intentTimeout)
 
 	// 核心管线全部以"动态管线"（PassID 引用）注册：
 	// 面板可可视化编辑管线 Pass 顺序（只替换 PassID 列表，Pass 实例复用），

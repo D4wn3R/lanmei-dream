@@ -21,6 +21,15 @@ cache_max_entries = 256
 max_response_bytes = 1048576
 max_output_bytes = 16384
 
+# 意图判断适配器（群聊"意图+提及判断"的实现选型）。
+# api_key 留空 → 走 LLM 意图判断（原路径）；配置 OpenRouter API Key → 启用 Jev 适配器
+# （TypeSafe System-1 结构化决策模型，经 OpenRouter 决策端点调用，非 OpenAI chat 格式）。
+[ai.intent_judge]
+api_key = ""
+base_url = "https://openrouter.ai/api/alpha/decisions"
+model = "typesafe/jev-1.13"
+timeout_seconds = 3
+
 [bot]
 # 机器人昵称；为空时代码回退为"蓝妹"
 nickname = "蓝妹"
