@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DaWesen/lanmei-dream/internal/ai"
 	"github.com/DaWesen/lanmei-dream/internal/database"
 	"github.com/DaWesen/lanmei-dream/internal/media"
 	"github.com/DaWesen/lanmei-dream/internal/model"
@@ -20,13 +19,13 @@ import (
 )
 
 // StickerPlugin 实现自定义表情的收藏与发送：管理员（普通管理员 + 超管）用 /添加表情
-// （兼容旧命令 /收表情）收藏消息中的图片（上传 RustFS + 视觉模型自动打标 + 写 sticker_library），
+// （兼容旧命令 /收表情）收藏消息中的图片（上传 RustFS + 按命令参数人工标签 + 写 sticker_library），
 // /删除表情 按精确标签删除并清理未被共享引用的 RustFS 对象，/发表情 按标签检索发送一张
 // （无参数时发最新收藏的一张），/表情列表 必须完整匹配且仅管理员可用；
 // pick_sticker 工具供 LLM 按语义（情绪/语境）检索表情库，返回可发送的图片 URL。
 //
-// 插件 ID sticker；依赖 RustFS 对象存储（store 为 nil 时收藏、删除、发送不可用，仍可查询库内记录）、
-// 视觉服务（vision 为 nil 时无法自动打标，收藏不可用）与 Postgres（db 由 PluginContext 在 OnInit 注入）；
+// 插件 ID sticker；依赖 RustFS 对象存储（store 为 nil 时收藏、删除、发送不可用，仍可查询库内记录）
+// 与 Postgres（db 由 PluginContext 在 OnInit 注入）；
 // 不使用受限 KV 与 StateStore。
 //
 // 数据来源约定（"不导包"）：
@@ -35,14 +34,13 @@ import (
 type StickerPlugin struct {
 	db     *database.DB
 	store  *media.ObjectStore
-	vision *ai.VisionService // 视觉模型（自动打标）；nil 时收藏表情不可用
 	logger *zap.Logger
 }
 
-// NewStickerPlugin 创建表情库插件。store 为 nil 时收藏、删除和发送功能不可用（仍可查询库内记录）；
-// vision 为 nil 时收藏表情的自动打标不可用。db 与 logger 在 OnInit 阶段从 PluginContext 注入。
-func NewStickerPlugin(store *media.ObjectStore, vision *ai.VisionService, logger *zap.Logger) *StickerPlugin {
-	return &StickerPlugin{store: store, vision: vision, logger: logger}
+// NewStickerPlugin 创建表情库插件。store 为 nil 时收藏、删除和发送功能不可用（仍可查询库内记录）。
+// db 与 logger 在 OnInit 阶段从 PluginContext 注入。
+func NewStickerPlugin(store *media.ObjectStore, logger *zap.Logger) *StickerPlugin {
+	return &StickerPlugin{store: store, logger: logger}
 }
 
 // Info 返回表情库插件元信息。
@@ -53,7 +51,7 @@ func (p *StickerPlugin) Info() pluginpkg.PluginInfo {
 		Description: "自定义表情收藏、按标签管理与按语义发送",
 		Version:     "1.1.0",
 		Commands: []pluginpkg.CommandDef{
-			{Name: "添加表情", Description: "收藏消息中的图片为表情（仅管理员），附带一张图片即可，标签由视觉模型自动生成", Order: 170},
+			{Name: "添加表情", Description: "收藏消息中的图片为表情（仅管理员），格式：/添加表情 标签1 标签2", Order: 170},
 			{Name: "删除表情", Description: "按精确标签删除表情（仅管理员且只接受显式斜杠命令），格式：/删除表情 标签", Order: 180},
 			{Name: "发表情", Description: "发送匹配标签的表情；无参数时发送随机表情，格式：/发表情 标签", Order: 80},
 			{Name: "表情列表", Description: "查看表情库清单（仅管理员），格式：/表情列表", Order: 90},
@@ -82,7 +80,7 @@ func (p *StickerPlugin) OnInit(ctx *pluginpkg.PluginContext) error {
 	p.logger = ctx.Logger
 
 	collectPassID := pluginpkg.PassID("sticker", "collect")
-	collectPass := &stickerCollectPass{db: p.db, store: p.store, vision: p.vision, logger: p.logger}
+	collectPass := &stickerCollectPass{db: p.db, store: p.store, logger: p.logger}
 	if err := ctx.Engine.RegisterPass(collectPassID, collectPass); err != nil {
 		return fmt.Errorf("register sticker collect pass: %w", err)
 	}
@@ -178,6 +176,17 @@ func hasStickerCollectPrefix(msg string) bool {
 	return false
 }
 
+// stripStickerCollectPrefix 去掉添加表情命令前缀，返回剩余参数部分。
+func stripStickerCollectPrefix(msg string) string {
+	msg = strings.TrimSpace(msg)
+	for _, p := range stickerCollectPrefixes {
+		if strings.HasPrefix(msg, p) {
+			return strings.TrimSpace(strings.TrimPrefix(msg, p))
+		}
+	}
+	return msg
+}
+
 // isCollectStickerCommand 判断消息是否为添加表情命令（兼容旧命令 /收表情）。
 func isCollectStickerCommand(ctx *conduit.MessageContext) bool {
 	return hasStickerCollectPrefix(ctx.RawMsg)
@@ -215,20 +224,19 @@ func isCommandReentry(ctx *conduit.MessageContext) bool {
 	return b
 }
 
-// stickerCollectPass 收藏表情：管理员图片上传 RustFS、经视觉模型自动打标后写入表情库。
+// stickerCollectPass 收藏表情：管理员图片上传 RustFS 后按命令参数中的人工标签写入表情库。
 type stickerCollectPass struct {
 	db     *database.DB
 	store  *media.ObjectStore
-	vision *ai.VisionService
 	logger *zap.Logger
 }
 
 // Execute 收藏表情：校验调用者为管理员后，取黑板 bot.image_urls 的首张图片下载
-// （10 秒超时、10MB 上限），上传 RustFS，再经视觉模型自动打标并写入表情库。
+// （10 秒超时、10MB 上限），上传 RustFS，按命令参数中的人工标签写入表情库。
 // 由 plugin.sticker.pipeline.collect 在 isCollectStickerCommand 命中 /添加表情
 // （兼容旧命令 /收表情）后调用。
-// 失败分支均只回复对应提示且不写库：非管理员、未附图片、RustFS 未配置、图片下载失败或内容为空、
-// 同图已收藏（objectKey 内容寻址幂等）、视觉模型未配置、打标失败、入库失败。
+// 失败分支均只回复对应提示且不写库：非管理员、缺标签参数、未附图片、RustFS 未配置、
+// 图片下载失败或内容为空、同图已收藏（objectKey 内容寻址幂等）、入库失败。
 func (pass *stickerCollectPass) Execute(ctx *conduit.MessageContext) error {
 	isSuper, _ := ctx.Extra[blackboardIsSuperUser].(bool)
 	if !isSuper {
@@ -243,6 +251,17 @@ func (pass *stickerCollectPass) Execute(ctx *conduit.MessageContext) error {
 		conduit.AppendOutput(ctx, &conduit.Message{
 			UserID: ctx.UserID, GroupID: ctx.GroupID, IsGroup: ctx.IsGroup,
 			Content: "表情存储未配置（RustFS 不可用），无法收藏",
+		})
+		return nil
+	}
+
+	// 解析标签：/添加表情 标签1 标签2
+	raw := stripStickerCollectPrefix(ctx.RawMsg)
+	tags := strings.Fields(raw)
+	if len(tags) == 0 {
+		conduit.AppendOutput(ctx, &conduit.Message{
+			UserID: ctx.UserID, GroupID: ctx.GroupID, IsGroup: ctx.IsGroup,
+			Content: "格式错误！用法：/添加表情 标签1 标签2（需附带一张图片）",
 		})
 		return nil
 	}
@@ -299,24 +318,7 @@ func (pass *stickerCollectPass) Execute(ctx *conduit.MessageContext) error {
 		return nil
 	}
 
-	// 视觉模型自动打标（替代人工标签参数，语义检索的标签质量由模型保证）
-	if pass.vision == nil {
-		conduit.AppendOutput(ctx, &conduit.Message{
-			UserID: ctx.UserID, GroupID: ctx.GroupID, IsGroup: ctx.IsGroup,
-			Content: "视觉模型未配置（bot.media.vision_enabled），无法自动打标，请联系管理员开启",
-		})
-		return nil
-	}
-	tags, err := pass.vision.GenerateTags(ctx.Ctx, data, mime)
-	if err != nil || len(tags) == 0 {
-		pass.logger.Warn("sticker: 视觉自动打标失败", zap.String("object_key", objectKey), zap.Error(err))
-		conduit.AppendOutput(ctx, &conduit.Message{
-			UserID: ctx.UserID, GroupID: ctx.GroupID, IsGroup: ctx.IsGroup,
-			Content: "标签生成失败，请稍后再试",
-		})
-		return nil
-	}
-
+	// 写库（人工标签参数，按空白切分）
 	tagsJSON, _ := json.Marshal(tags)
 	sticker := &model.StickerLibrary{
 		ObjectKey: objectKey,
