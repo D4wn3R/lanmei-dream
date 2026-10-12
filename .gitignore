@@ -27,3 +27,7 @@ docs/*.csv
 /.trae/
 /scripts/
 /.zcodeignore
+/.agents/
+
+# 服务器部署手册（本地维护，不提交）
+/docs/deploy-kgy-websearch.md

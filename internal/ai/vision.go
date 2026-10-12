@@ -52,15 +52,20 @@ func NewVisionService(m model.BaseChatModel, logger *zap.Logger) *VisionService 
 	}
 }
 
-// Describe 对图片 URL 执行视觉理解，返回中文文字描述。
-// imageURL 需为模型可访问的 URL（可传 RustFS 预签名 URL）。
-func (v *VisionService) Describe(ctx context.Context, imageURL string) (string, error) {
-	if strings.TrimSpace(imageURL) == "" {
-		return "", errors.New("vision: image url 为空")
+// Describe 对图片执行视觉理解，返回中文文字描述。
+// imageData 以 data URL 内嵌请求，无需对象存储公网可达（生产 RustFS 为内网地址，
+// 预签名 URL 云端模型拉不到）。与 GenerateTags 一致关闭推理思考，避免推理模型拖慢响应。
+func (v *VisionService) Describe(ctx context.Context, imageData []byte, mime string) (string, error) {
+	if len(imageData) == 0 {
+		return "", errors.New("vision: image data 为空")
 	}
 	if v.model == nil {
 		return "", errors.New("vision: 模型未配置")
 	}
+	if mime == "" {
+		mime = "image/png"
+	}
+	dataURL := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(imageData)
 
 	ctx, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
@@ -69,12 +74,12 @@ func (v *VisionService) Describe(ctx context.Context, imageURL string) (string, 
 		{Role: schema.System, Content: v.systemPrompt},
 		{Role: schema.User, UserInputMultiContent: []schema.MessageInputPart{
 			{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{
-				MessagePartCommon: schema.MessagePartCommon{URL: &imageURL},
+				MessagePartCommon: schema.MessagePartCommon{URL: &dataURL},
 			}},
 		}},
 	}
 
-	resp, err := v.model.Generate(ctx, msgs)
+	resp, err := v.model.Generate(ctx, msgs, llm.DisableThinkingOption())
 	if err != nil {
 		return "", fmt.Errorf("vision: 图片理解失败: %w", err)
 	}
@@ -89,7 +94,7 @@ func (v *VisionService) Describe(ctx context.Context, imageURL string) (string, 
         if len(r) > v.maxDescLen {
                 desc = string(r[:v.maxDescLen]) + "…"
         }
-        v.logger.Debug("图片理解完成", zap.String("url", imageURL), zap.Int("len", len([]rune(desc))))
+        v.logger.Debug("图片理解完成", zap.Int("len", len([]rune(desc))))
         return desc, nil
 }
 

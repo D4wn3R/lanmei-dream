@@ -106,13 +106,9 @@ func (p *MediaPass) processImage(ctx *conduit.MessageContext, seg gateway.Normal
 	}
 
 	// 缓存到 RustFS（内容寻址，重复图片零成本）
-	var objKey string
 	if p.Store != nil {
-		key, putErr := p.cacheToStore(ctx, data, mime)
-		if putErr != nil {
+		if _, putErr := p.cacheToStore(ctx, data, mime); putErr != nil {
 			p.Logger.Warn("media: 媒体缓存失败（不影响视觉理解）", zap.Error(putErr))
-		} else {
-			objKey = key
 		}
 	}
 
@@ -120,14 +116,7 @@ func (p *MediaPass) processImage(ctx *conduit.MessageContext, seg gateway.Normal
 	if p.Vision == nil || p.Cfg == nil || !p.Cfg.VisionEnabled {
 		return "", nil
 	}
-	viewURL := url
-	if objKey != "" {
-		// 优先使用 RustFS 预签名 URL（更稳定、不走原始 URL 可能存在的时效性限制）
-		if presigned, perr := p.Store.Presign(ctx.Ctx, objKey, 10*time.Minute); perr == nil {
-			viewURL = presigned
-		}
-	}
-	desc, err := p.Vision.Describe(ctx.Ctx, viewURL)
+	desc, err := p.Vision.Describe(ctx.Ctx, data, mime)
 	if err != nil {
 		return "", err
 	}
