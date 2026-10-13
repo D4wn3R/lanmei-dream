@@ -23,7 +23,7 @@ type BusinessRegistry struct {
 	ncmURL             string                       // 网易云音乐 API 地址（点歌插件使用）
 	musicSendMode      string                       // 点歌发送方式：auto/card/link
 	store              *media.ObjectStore           // RustFS 对象存储（表情库/入群欢迎插件使用，未配置时为 nil）
-	vision             *ai.VisionService            // 视觉理解服务（表情库自动打标使用，未配置时为 nil）
+	vision             *ai.VisionService            // 视觉理解服务（随机美图插件使用，未配置时为 nil）
 	llmClient          llm.LLMClient                // LLM 客户端（海龟汤插件出题/判定使用，未配置时为 nil）
 	turtleSoupTimeout  time.Duration                // 海龟汤出题/判定 LLM 调用独立超时（<=0 不限制）
 	quizDir            string                       // 编程答题题库根目录
@@ -55,7 +55,7 @@ func (r *BusinessRegistry) SetObjectStore(store *media.ObjectStore) {
 	r.store = store
 }
 
-// SetVisionService 设置视觉理解服务（表情库自动打标依赖；未配置时收藏表情不可用）。
+// SetVisionService 设置视觉理解服务（随机美图插件依赖；未配置时为 nil）。
 func (r *BusinessRegistry) SetVisionService(v *ai.VisionService) {
 	r.vision = v
 }
@@ -158,7 +158,7 @@ func (r *BusinessRegistry) RegisterBuiltins() error {
 		return err
 	}
 
-	if err := register(builtins.Sticker, "sticker", NewStickerPlugin(r.store, r.vision, logger)); err != nil {
+	if err := register(builtins.Sticker, "sticker", NewStickerPlugin(r.store, logger)); err != nil {
 		return err
 	}
 
