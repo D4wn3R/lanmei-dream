@@ -20,6 +20,7 @@ import (
 	"github.com/DaWesen/lanmei-dream/internal/ai/prompt"
 	"github.com/DaWesen/lanmei-dream/internal/ai/skill"
 	"github.com/DaWesen/lanmei-dream/internal/bot"
+	antifraud "github.com/DaWesen/lanmei-dream/internal/bizplugin/antifraud"
 	"github.com/DaWesen/lanmei-dream/internal/command"
 	"github.com/DaWesen/lanmei-dream/internal/config"
 	"github.com/DaWesen/lanmei-dream/internal/database"
@@ -47,6 +48,8 @@ type Deps struct {
 	Knowledge *kb.Service
 	Wasm      *pluginpkg.WasmManager
 	Commands  *command.System
+	// AntiFraud 反诈插件实例（未启用时为 nil，反诈接口返回不可用）
+	AntiFraud *antifraud.Plugin
 }
 
 // Manager 管理面板服务。
@@ -113,6 +116,7 @@ func New(cfg *config.ManagerConfig, deps Deps) (*Manager, error) {
 		Knowledge: deps.Knowledge,
 		Wasm:      deps.Wasm,
 		Commands:  deps.Commands,
+		AntiFraud: deps.AntiFraud,
 	})
 	m.h = h
 
@@ -288,6 +292,14 @@ func (m *Manager) setupRoutes() {
 	protected.Delete("/stickers/:id", super, stepUp, h.DeleteSticker)
 
 	protected.Get("/commands", h.ListCommands)
+
+	// 反诈：违规记录查询与审批处置（插件未启用时接口统一返回 503）
+	protected.Get("/antifraud/stats", h.AntiFraudStats)
+	protected.Get("/antifraud/records", h.ListAntiFraudRecords)
+	protected.Get("/antifraud/records/:id", h.GetAntiFraudRecord)
+	protected.Post("/antifraud/records/:id/approve", h.ApproveAntiFraudRecord)
+	protected.Post("/antifraud/records/:id/reject", h.RejectAntiFraudRecord)
+	protected.Delete("/antifraud/records/:id", super, stepUp, h.DeleteAntiFraudRecord)
 }
 
 // Start 启动服务：超管引导 → 后台协程 → 监听。

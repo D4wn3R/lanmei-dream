@@ -6,6 +6,7 @@ import (
 
 	"github.com/DaWesen/lanmei-dream/internal/ai"
 	"github.com/DaWesen/lanmei-dream/internal/ai/llm"
+	antifraud "github.com/DaWesen/lanmei-dream/internal/bizplugin/antifraud"
 	randombeauty "github.com/DaWesen/lanmei-dream/internal/bizplugin/random_beauty"
 	"github.com/DaWesen/lanmei-dream/internal/config"
 	"github.com/DaWesen/lanmei-dream/internal/media"
@@ -28,6 +29,9 @@ type BusinessRegistry struct {
 	turtleSoupTimeout  time.Duration                // 海龟汤出题/判定 LLM 调用独立超时（<=0 不限制）
 	quizDir            string                       // 编程答题题库根目录
 	randomBeautyConfig config.RandomBeautyConfig    // 随机美图插件配置
+	antifraudConfig    config.AntifraudConfig       // 反诈插件配置
+	superUsers         string                       // 静态超管原文（platform:userID,...），反诈上报使用
+	antifraudPlugin    *antifraud.Plugin            // 反诈插件实例（未启用时为 nil，管理面板据此判断可用性）
 	logger             *zap.Logger
 }
 
@@ -78,6 +82,19 @@ func (r *BusinessRegistry) SetQuizDir(dir string) {
 // SetRandomBeautyConfig 设置随机美图插件的上游与安全阈值配置。
 func (r *BusinessRegistry) SetRandomBeautyConfig(cfg config.RandomBeautyConfig) {
 	r.randomBeautyConfig = cfg
+}
+
+// SetAntifraudConfig 设置反诈插件配置与静态超管（上报目标）。
+func (r *BusinessRegistry) SetAntifraudConfig(cfg config.AntifraudConfig, superUsers string) {
+	r.antifraudConfig = cfg
+	r.superUsers = superUsers
+}
+
+// Antifraud 返回反诈插件实例；未启用或未注册时为 nil。
+//
+// 管理面板通过它读取违规记录与执行审批，因此必须在 RegisterBuiltins 之后调用。
+func (r *BusinessRegistry) Antifraud() *antifraud.Plugin {
+	return r.antifraudPlugin
 }
 
 // RegisterBuiltins 按配置注册所有内置业务插件。
@@ -188,6 +205,27 @@ func (r *BusinessRegistry) RegisterBuiltins() error {
 		if err := register(true, "random_beauty", p); err != nil {
 			return err
 		}
+	}
+
+	if !builtins.Antifraud {
+		if err := register(false, "antifraud", nil); err != nil {
+			return err
+		}
+	} else if _, loaded := r.registry.Get("antifraud"); loaded {
+		logger.Info("bizplugin: 插件已由 Wasm 动态加载，跳过内置注册", zap.String("plugin", "antifraud"))
+	} else if r.antifraudConfig.Endpoint == "" {
+		// 缺 endpoint 时注册一个判定必然失败的空插件毫无意义，直接跳过并给明确提示
+		logger.Warn("bizplugin: 反诈插件已启用但未配置推理服务地址，跳过注册",
+			zap.String("config", "[plugin.antifraud].endpoint 或 LANMEI_PLUGIN_ANTIFRAUD_ENDPOINT"))
+	} else {
+		p, err := antifraud.New(r.antifraudConfig, r.superUsers, logger)
+		if err != nil {
+			return fmt.Errorf("bizplugin: 创建 antifraud 插件失败: %w", err)
+		}
+		if err := register(true, "antifraud", p); err != nil {
+			return err
+		}
+		r.antifraudPlugin = p
 	}
 
 	return nil

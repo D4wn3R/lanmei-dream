@@ -6,6 +6,7 @@ import (
 	"github.com/DaWesen/lanmei-dream/internal/ai/tool"
 	"github.com/DaWesen/lanmei-dream/internal/command"
 	"github.com/DaWesen/lanmei-dream/internal/database"
+	"github.com/DaWesen/lanmei-dream/internal/gateway"
 	"github.com/cloudwego/eino/schema"
 	"github.com/zrurf/conduit"
 	"go.uber.org/zap"
@@ -77,6 +78,37 @@ type ToolDef struct {
 	Handler     func(ctx context.Context, argsJSON string) (string, error)
 }
 
+// MessageObserver 是插件的可选扩展接口：实现它的插件可旁路观察每条已完成处理的
+// 消息上下文，但不参与行为树决策、不改变消息走向。
+//
+// 与 Pass/Subtree 的区别：行为树的子树一旦匹配成功便独占该消息（其余分支不再运行），
+// 因此「只看不抢」的插件必须用观察者而不是子树。
+//
+// 实现约束：ObserveMessage 在消息处理回调中同步调用，必须立即返回，只允许入队、计数等
+// 轻量操作；网络、数据库、等待类工作须转到插件自有协程。实现方自行保证并发安全，
+// 并自行过滤不关心的消息（如私聊、事件、机器人自身消息）。
+type MessageObserver interface {
+	ObserveMessage(ctx *conduit.MessageContext)
+}
+
+// MessageActions 是插件可用的出站动作能力：撤回消息、禁言群成员、主动发送文本。
+//
+// 由网关实现并在注册表装配时注入 PluginContext.Actions；为 nil 时插件无法执行出站动作。
+// 撤回 / 禁言返回平台动作响应，失败原因（如机器人无群管理权限）由响应如实表达。
+type MessageActions interface {
+	// RecallMessage 撤回指定消息；connID 失效时按 platform 回退到同平台连接。
+	RecallMessage(ctx context.Context, platform, connID, messageID string) (*gateway.ActionResponse, error)
+
+	// BanGroupMember 禁言群成员，seconds 为 0 表示解除禁言。
+	BanGroupMember(ctx context.Context, platform, connID, groupID, userID string, seconds int) (*gateway.ActionResponse, error)
+
+	// SendTextTo 主动发送纯文本到指定群（isGroup=true）或私聊用户。
+	SendTextTo(ctx context.Context, platform, connID string, isGroup bool, targetID, text string) error
+
+	// SendAtTextTo 在群里发送「@成员 + 文本」的公开消息，用于违规告知等群内提示。
+	SendAtTextTo(ctx context.Context, platform, connID, groupID, atUserID, text string) error
+}
+
 // PluginContext 是插件生命周期方法的上下文参数，提供对引擎、存储、数据库、
 // 命令系统和注册表的访问。所有插件的 OnInit/OnStart/OnStop 共享同一实例。
 type PluginContext struct {
@@ -92,6 +124,9 @@ type PluginContext struct {
 	KV *database.PluginKVStore
 
 	DB *database.DB
+
+	// Actions 出站动作能力（撤回 / 禁言 / 主动发送），由网关实现；为 nil 时不可用。
+	Actions MessageActions
 
 	CmdSys *command.System
 

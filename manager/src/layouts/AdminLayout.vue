@@ -18,6 +18,7 @@ import {
   PanelLeft,
   Puzzle,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sticker,
@@ -82,6 +83,7 @@ const menuItems: MenuItem[] = [
       { path: '/commands', title: '命令' },
     ],
   },
+  { path: '/antifraud', title: '反诈', icon: 'antifraud' },
   { path: '/audit', title: '操作审计', icon: 'shield' },
   { path: '/settings', title: '设置', icon: 'settings' },
 ]
@@ -93,6 +95,7 @@ function menuIcon(name: string) {
     coins: Coins,
     users: Users,
     shield: ShieldCheck,
+    antifraud: ShieldAlert,
     settings: Settings,
     library: Library,
     book: BookOpen,

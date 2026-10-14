@@ -30,6 +30,8 @@ type Registry struct {
 	db      *database.DB
 	cmdSys  *command.System
 	toolReg *tool.Registry
+	// actions 出站动作能力（网关实现），注入 PluginContext 供插件撤回/禁言/主动发送
+	actions MessageActions
 	logger  *zap.Logger
 
 	// plugins 已注册的插件实例（按注册顺序）
@@ -112,6 +114,41 @@ func (r *Registry) SetKVStore(kv *database.PluginKVStore) {
 //   - fn：无参回调；为 nil 时不通知
 func (r *Registry) SetRebuildBT(fn func()) {
 	r.rebuildBT = fn
+}
+
+// SetActions 注入出站动作能力（撤回 / 禁言 / 主动发送）。
+// 在 InitPlugins 之前调用；不设置时插件的 PluginContext.Actions 为 nil，出站动作不可用。
+//
+// 参数：
+//   - actions：网关实现的动作适配器（如 gateway.Actions）；为 nil 时禁用出站动作
+func (r *Registry) SetActions(actions MessageActions) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.actions = actions
+}
+
+// Observers 返回当前已启动、且实现了 MessageObserver 的插件。
+//
+// 返回：观察者快照（无实现时返回 nil），按注册顺序排列。
+//
+// 注意：每收到一条消息调用一次，返回后即释放注册表锁，观察者执行不持锁；
+// 调用方需保证观察者快速返回，见 MessageObserver。
+func (r *Registry) Observers() []MessageObserver {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var observers []MessageObserver
+	for _, p := range r.plugins {
+		obs, ok := p.(MessageObserver)
+		if !ok {
+			continue
+		}
+		if st, ok := r.pluginState[p.Info().ID]; !ok || st.state != stateStarted {
+			continue
+		}
+		observers = append(observers, obs)
+	}
+	return observers
 }
 
 // Register 注册一个插件到注册表，此阶段只登记实例，不调用任何生命周期方法。
@@ -555,6 +592,7 @@ func (r *Registry) newPluginContextWith(ctx context.Context) *PluginContext {
 		Store:    r.store,
 		KV:       r.kv,
 		DB:       r.db,
+		Actions:  r.actions,
 		CmdSys:   r.cmdSys,
 		Registry: r,
 		ToolReg:  r.toolReg,

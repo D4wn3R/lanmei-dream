@@ -69,6 +69,12 @@ func Init() (*Config, error) {
 		"LANMEI_PLUGIN_ROOT_DIR":                 "plugin.root_dir",
 		"LANMEI_PLUGIN_NCM_URL":                  "plugin.ncm_url",
 		"LANMEI_PLUGIN_MUSIC_SEND_MODE":          "plugin.music_send_mode",
+		"LANMEI_PLUGIN_ANTIFRAUD_ENDPOINT":       "plugin.antifraud.endpoint",
+		"LANMEI_PLUGIN_ANTIFRAUD_AUTO_THRESHOLD": "plugin.antifraud.auto_threshold",
+		"LANMEI_PLUGIN_ANTIFRAUD_REPORT_THRESHOLD": "plugin.antifraud.report_threshold",
+		"LANMEI_PLUGIN_ANTIFRAUD_MUTE_SECONDS":     "plugin.antifraud.mute_seconds",
+		"LANMEI_PLUGIN_ANTIFRAUD_NOTICE_GROUP_ID":  "plugin.antifraud.notice_group_id",
+		"LANMEI_PLUGIN_ANTIFRAUD_PANEL_BASE_URL":   "plugin.antifraud.panel_base_url",
 		"LANMEI_KNOWLEDGE_ENABLED":               "knowledge.enabled",
 		"LANMEI_KNOWLEDGE_AUTO_RECALL_LIMIT":     "knowledge.auto_recall_limit",
 		// 多媒体（RustFS）与机器人行为配置

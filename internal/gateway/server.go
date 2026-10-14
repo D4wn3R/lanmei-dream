@@ -331,6 +331,7 @@ func (s *Server) handleV12Message(conn *Connection, data []byte) {
 			s.logger.Error("gateway: OB12 响应解析失败", zap.String("conn", conn.ID), zap.Error(err))
 			return
 		}
+		s.hub.ResolveActionResponse(resp.Echo, &resp)
 		if resp.RetCode != 0 || resp.Status == "failed" {
 			s.logger.Warn("gateway: OB12 API 失败",
 				zap.String("conn", conn.ID),
@@ -395,6 +396,7 @@ func (s *Server) handleV11Message(conn *Connection, data []byte) {
 			s.logger.Error("gateway: OB11 响应解析失败", zap.String("conn", conn.ID), zap.Error(err))
 			return
 		}
+		s.hub.ResolveActionResponse(resp.Echo, &resp)
 		// 仅失败时告警。
 		if resp.RetCode != 0 || resp.Status == "failed" {
 			s.logger.Warn("gateway: OB11 API 失败",

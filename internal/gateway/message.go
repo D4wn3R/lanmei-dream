@@ -625,14 +625,32 @@ type ActionRequest struct {
 
 // ActionResponse 表示 OneBot 实现返回的动作响应。
 //
-// 注意：网关仅对失败响应（RetCode != 0 或 Status == "failed"）记录告警日志，
-// 不按 Echo 做请求-响应配对。
+// 注意：网关对失败响应（RetCode != 0 或 Status == "failed"）记录告警日志；
+// 带 Echo 的响应还会交给 Hub.ResolveActionResponse，配对给 SendToWait 的等待者。
 type ActionResponse struct {
 	Status  string          `json:"status"`            // ok / failed
 	RetCode int64           `json:"retcode"`           // 返回码
 	Data    json.RawMessage `json:"data"`              // 响应数据
 	Message string          `json:"message,omitempty"` // 错误信息
 	Echo    string          `json:"echo,omitempty"`    // 请求标识
+}
+
+// Failed 报告动作响应是否为失败（Status 非 "ok" 或 RetCode 非 0）。
+func (r *ActionResponse) Failed() bool {
+	return r == nil || r.Status != "ok" || r.RetCode != 0
+}
+
+// FailureText 返回失败的简短描述（错误信息 + retcode），成功时返回空串。
+//
+// 返回：形如 "retcode=100 msg=权限不足" 的文本；平台未给出 message 时只有 retcode。
+func (r *ActionResponse) FailureText() string {
+	if r == nil {
+		return "无响应"
+	}
+	if r.Message != "" {
+		return fmt.Sprintf("retcode=%d msg=%s", r.RetCode, r.Message)
+	}
+	return fmt.Sprintf("retcode=%d", r.RetCode)
 }
 
 // BuildSendMessageV12 构建 OneBot 12 send_message 动作（纯文本）。
@@ -746,6 +764,77 @@ func BuildSendMessageSegmentsV11(isGroup bool, userID, groupID string, segs []No
 		Params: map[string]any{
 			"user_id": uid,
 			"message": ToMessageSegmentV11(segs),
+		},
+	}
+}
+
+// BuildDeleteMsgV12 构建 OneBot 12 delete_message 动作（撤回消息）。
+//
+// 参数：
+//   - messageID：平台消息 ID（OneBot 12 为字符串）
+//
+// 返回：delete_message 动作请求。
+func BuildDeleteMsgV12(messageID string) *ActionRequest {
+	return &ActionRequest{
+		Action: "delete_message",
+		Params: map[string]any{"message_id": messageID},
+	}
+}
+
+// BuildDeleteMsgV11 构建 OneBot 11 delete_msg 动作（撤回消息）。
+//
+// 参数：
+//   - messageID：平台消息 ID（十进制字符串）
+//
+// 返回：delete_msg 动作请求。
+//
+// 注意：ID 经 strconv.ParseInt 转 int64，非法或为空时按 0 发送，由平台侧报错。
+func BuildDeleteMsgV11(messageID string) *ActionRequest {
+	mid, _ := strconv.ParseInt(messageID, 10, 64)
+	return &ActionRequest{
+		Action: "delete_msg",
+		Params: map[string]any{"message_id": mid},
+	}
+}
+
+// BuildSetGroupBanV12 构建 OneBot 12 set_group_ban 动作（禁言群成员）。
+//
+// 参数：
+//   - groupID：群 ID（字符串）
+//   - userID：目标成员 ID（字符串）
+//   - seconds：禁言时长（秒），0 表示解除禁言
+//
+// 返回：set_group_ban 动作请求。
+func BuildSetGroupBanV12(groupID, userID string, seconds int) *ActionRequest {
+	return &ActionRequest{
+		Action: "set_group_ban",
+		Params: map[string]any{
+			"group_id": groupID,
+			"user_id":  userID,
+			"duration": seconds,
+		},
+	}
+}
+
+// BuildSetGroupBanV11 构建 OneBot 11 set_group_ban 动作（禁言群成员）。
+//
+// 参数：
+//   - groupID：群 ID（十进制字符串）
+//   - userID：目标成员 ID（十进制字符串）
+//   - seconds：禁言时长（秒），0 表示解除禁言
+//
+// 返回：set_group_ban 动作请求。
+//
+// 注意：ID 经 strconv.ParseInt 转 int64，非法或为空时按 0 发送，由平台侧报错。
+func BuildSetGroupBanV11(groupID, userID string, seconds int) *ActionRequest {
+	gid, _ := strconv.ParseInt(groupID, 10, 64)
+	uid, _ := strconv.ParseInt(userID, 10, 64)
+	return &ActionRequest{
+		Action: "set_group_ban",
+		Params: map[string]any{
+			"group_id": gid,
+			"user_id":  uid,
+			"duration": seconds,
 		},
 	}
 }
