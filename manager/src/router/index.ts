@@ -124,6 +124,12 @@ const routes = [
         meta: { title: '命令' },
       },
       {
+        path: 'antifraud',
+        name: 'antifraud',
+        component: () => import('@/views/antifraud/AntiFraudView.vue'),
+        meta: { title: '反诈' },
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('@/views/settings/SettingsView.vue'),

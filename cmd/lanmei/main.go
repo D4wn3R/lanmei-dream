@@ -291,6 +291,10 @@ func main() {
 		AccessToken: cfg.Bot.Gateway.AccessToken,
 	}, logger, nil)
 
+	// 插件出站动作能力（撤回 / 禁言 / 主动发送）：经 PluginContext.Actions 注入，
+	// 供反诈等需要「动作 + 平台真实结果」的插件使用，见 docs/anti-fraud.md。
+	pluginReg.SetActions(gateway.NewActions(gwServer.Hub()))
+
 	// 意图判断适配器：[ai.intent_judge].api_key 非空即启用 Jev（TypeSafe System-1 决策模型，
 	// 经 OpenRouter 决策端点调用），否则走 LLM 路径（judge 传 nil，由 bot 内部回退）。
 	var intentJudge intent.JudgeAdapter
@@ -335,6 +339,8 @@ func main() {
 	bizReg.SetLLMClient(llmClient)
 	bizReg.SetQuizDir(cfg.Quiz.Dir)
 	bizReg.SetRandomBeautyConfig(cfg.Plugin.RandomBeauty)
+	// 反诈插件：推理服务地址/阈值来自 [plugin.antifraud]，上报目标含静态超管与 bot_admin 动态管理员
+	bizReg.SetAntifraudConfig(cfg.Plugin.Antifraud, cfg.Bot.ParseSuperUsers())
 	// 海龟汤出题/判定 LLM 独立超时（默认 120s，见 LANMEI_BOT_TURTLE_SOUP_TIMEOUT_SECONDS）：
 	// 走独立 context，不占用消息级 20s 预算
 	bizReg.SetTurtleSoupTimeout(time.Duration(cfg.Bot.TurtleSoupTimeoutSeconds) * time.Second)
@@ -370,6 +376,7 @@ func main() {
 			Knowledge: kbSvc,
 			Wasm:      wasmManager,
 			Commands:  cmdSys,
+			AntiFraud: bizReg.Antifraud(),
 		})
 		if err != nil {
 			startupFatal("管理面板初始化失败", zap.Error(err))

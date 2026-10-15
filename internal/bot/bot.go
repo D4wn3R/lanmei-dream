@@ -652,11 +652,32 @@ func (b *Bot) OnMessage(msg *gateway.NormalizedMessage) {
 	}
 }
 
+// observeMessage 把消息上下文交给旁路观察者（实现了 plugin.MessageObserver 的已启动插件）。
+//
+// 观察者不参与行为树决策、不改变消息走向，仅用于「只看一眼」的旁路逻辑（如内容风控）；
+// 单个观察者 panic 只记录日志，既不影响本插件后续回调，也不影响其它观察者与消息处理。
+func (b *Bot) observeMessage(ctx *conduit.MessageContext) {
+	if b.plugins == nil {
+		return
+	}
+	for _, observer := range b.plugins.Observers() {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					b.logger.Error("bot: 消息观察者 panic", zap.Any("panic", r))
+				}
+			}()
+			observer.ObserveMessage(ctx)
+		}()
+	}
+}
+
 // makeEventCallback 构造通知事件专用回调：事件处理出错时只记日志、绝不回复；
 // 正常完成时发送管线输出（出站段优先，纯文本兜底，供事件消费插件使用）。
-// 无论成败均采集执行链路 Trace（审计面板可查看事件处理轨迹）。
+// 无论成败均采集执行链路 Trace（审计面板可查看事件处理轨迹）并通知旁路观察者。
 func (b *Bot) makeEventCallback(msg *gateway.NormalizedMessage) func(*conduit.MessageContext, error) {
 	return func(ctx *conduit.MessageContext, err error) {
+		b.observeMessage(ctx)
 		b.emitTrace(ctx, err, msg)
 		if err != nil {
 			b.logger.Error("bot: event process failed",
@@ -674,9 +695,10 @@ func (b *Bot) makeEventCallback(msg *gateway.NormalizedMessage) func(*conduit.Me
 //   - 正常完成（未 yield）：发送管线输出（出站段优先，纯文本兜底）
 //   - 流式挂起（yield）：启动 goroutine 消费段落通道，逐条重入引擎投递
 //
-// 无论成败均采集执行链路 Trace（管理面板实时查看节点状态/耗时/错误）。
+// 无论成败均采集执行链路 Trace（管理面板实时查看节点状态/耗时/错误）并通知旁路观察者。
 func (b *Bot) makeResponseCallback(msg *gateway.NormalizedMessage) func(*conduit.MessageContext, error) {
 	return func(ctx *conduit.MessageContext, err error) {
+		b.observeMessage(ctx)
 		if err != nil {
 			b.emitTrace(ctx, err, msg)
 			b.logger.Error("conduit: process failed", zap.Error(err))

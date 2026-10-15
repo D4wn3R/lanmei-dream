@@ -78,6 +78,46 @@ type PluginConfig struct {
 
 	// RandomBeauty 随机美图插件配置。
 	RandomBeauty RandomBeautyConfig `mapstructure:"random_beauty"`
+
+	// Antifraud 反诈插件配置（接入 LanmeiAntiFraud 推理服务）。
+	Antifraud AntifraudConfig `mapstructure:"antifraud"`
+}
+
+// AntifraudConfig 反诈插件配置。
+//
+// 插件把消息异步送 LanmeiAntiFraud 推理服务判定：违规分（1 - P(正常)）达到 AutoThreshold
+// 自动撤回 + 禁言并上报，达到 ReportThreshold 只入库并上报、由管理员在管理面板审批，
+// 低于 ReportThreshold 不记录。零值由插件按默认值补齐（见 antifraud 包的 normalizeConfig）。
+type AntifraudConfig struct {
+	// Endpoint 反诈推理服务地址，如 http://antifraud:8000；为空时插件不注册
+	Endpoint string `mapstructure:"endpoint"`
+
+	AutoThreshold   float64 `mapstructure:"auto_threshold"`   // 自动处置阈值（违规分），默认 0.90
+	ReportThreshold float64 `mapstructure:"report_threshold"` // 入库上报阈值（违规分），默认 0.60
+	MuteSeconds     int     `mapstructure:"mute_seconds"`     // 自动处置禁言时长（秒），0 表示不禁言
+
+	MinChars        int      `mapstructure:"min_chars"`         // 参与判定的最短文本长度（rune），默认 4
+	MonitorPrivate  bool     `mapstructure:"monitor_private"`   // 是否判定私聊消息，默认 false
+	GroupWhitelist  []string `mapstructure:"group_whitelist"`   // 仅判定这些群；非空时白名单生效
+	GroupBlacklist  []string `mapstructure:"group_blacklist"`   // 不判定这些群
+	SkipSuperUsers  bool     `mapstructure:"skip_super_users"`  // 跳过超管/管理员消息，默认 true
+	MaxContentChars int      `mapstructure:"max_content_chars"` // 入库与送判的最大文本长度，默认 1000
+
+	UserCooldownSeconds int `mapstructure:"user_cooldown_seconds"` // 同一用户判定冷却（秒），默认 10
+	QueueSize           int `mapstructure:"queue_size"`            // 待判定队列长度，满则丢弃，默认 256
+	BatchSize           int `mapstructure:"batch_size"`            // 单次提交的最大文本数，默认 16
+	BatchWindowMillis   int `mapstructure:"batch_window_millis"`   // 批量聚合窗口（毫秒），默认 200
+
+	MaxBatchesPerSecond   float64 `mapstructure:"max_batches_per_second"`  // 提交速率上限（批/秒），默认 2
+	RequestTimeoutSeconds int     `mapstructure:"request_timeout_seconds"` // 单批判定总预算（含轮询，秒），默认 8
+	CacheTTLSeconds       int     `mapstructure:"cache_ttl_seconds"`       // 相同文本判决缓存（秒），默认 600
+	DedupWindowSeconds    int     `mapstructure:"dedup_window_seconds"`    // 同用户同文本记录合并窗口（秒），默认 120
+	CircuitFailures       int     `mapstructure:"circuit_failures"`        // 连续失败次数触发熔断，默认 5
+	CircuitOpenSeconds    int     `mapstructure:"circuit_open_seconds"`    // 熔断持续秒数，默认 60
+
+	NoticeGroupID string `mapstructure:"notice_group_id"` // 反诈告警群 ID；为空时只私聊管理员
+	PanelBaseURL  string `mapstructure:"panel_base_url"`  // 管理面板地址，用于上报中的记录链接；为空则不带链接
+	RetentionDays int    `mapstructure:"retention_days"`  // 违规记录保留天数，0 表示永久保留
 }
 
 // RandomBeautyConfig 随机美图插件配置。
@@ -135,6 +175,8 @@ type PluginBuiltinsConfig struct {
 	DailyQuote bool `mapstructure:"daily_quote"`
 	// RandomBeauty 严格安全审核的 Pixiv 随机美图插件
 	RandomBeauty bool `mapstructure:"random_beauty"`
+	// Antifraud 反诈插件（需同时配置 [plugin.antifraud].endpoint）
+	Antifraud bool `mapstructure:"antifraud"`
 }
 
 // DatabaseConfig 数据库配置

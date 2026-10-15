@@ -307,3 +307,56 @@ export interface CommandView {
   description: string
   source: string
 }
+
+export interface AntiFraudRecord {
+  id: number
+  created_at: string
+  platform: string
+  conn_id: string
+  group_id: string
+  user_id: string
+  nickname: string
+  message_id: string
+  content: string
+  content_hash: string
+  label_id: number
+  label_key: string
+  label_name: string
+  confidence: number
+  violation_score: number
+  probabilities: number[] | null
+  expert_weights: { key: string; weight: number }[] | null
+  status: string
+  repeat_count: number
+  last_seen_at: string
+  recall_status: string
+  recall_error: string
+  mute_status: string
+  mute_error: string
+  mute_seconds: number
+  reviewed_by: string
+  reviewed_at: string | null
+  review_note: string
+  notified_at: string | null
+}
+
+export interface AntiFraudScoreBucket {
+  min: number
+  max: number
+  count: number
+}
+
+export interface AntiFraudLabelCount {
+  label_key: string
+  label_name: string
+  count: number
+}
+
+export interface AntiFraudStats {
+  pending: number
+  today_total: number
+  today_auto: number
+  action_failed: number
+  score_buckets: AntiFraudScoreBucket[] | null
+  label_counts: AntiFraudLabelCount[] | null
+}

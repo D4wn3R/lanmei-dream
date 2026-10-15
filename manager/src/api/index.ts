@@ -2,6 +2,8 @@
 import { request, openSSE } from './client'
 import type {
   Admin,
+  AntiFraudRecord,
+  AntiFraudStats,
   AuthSession,
   CommandView,
   ConfigRevision,
@@ -301,4 +303,46 @@ function queryRange(since?: string, until?: string): string {
   if (since) s += `&since=${encodeURIComponent(since)}`
   if (until) s += `&until=${encodeURIComponent(until)}`
   return s
+}
+
+// 反诈插件：违规记录查询与审批（后端 /api/antifraud/*，插件未启用时返回 503）
+export interface AntiFraudQuery {
+  status?: string
+  platform?: string
+  group_id?: string
+  user_id?: string
+  label_key?: string
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
+export const antifraudApi = {
+  stats: () => request<AntiFraudStats>('/api/antifraud/stats'),
+  records: (query: AntiFraudQuery = {}) => {
+    const q = new URLSearchParams({
+      page: String(query.page ?? 1),
+      page_size: String(query.pageSize ?? 20),
+    })
+    if (query.status) q.set('status', query.status)
+    if (query.platform) q.set('platform', query.platform)
+    if (query.group_id) q.set('group_id', query.group_id)
+    if (query.user_id) q.set('user_id', query.user_id)
+    if (query.label_key) q.set('label_key', query.label_key)
+    if (query.keyword) q.set('keyword', query.keyword)
+    return request<Page<AntiFraudRecord>>(`/api/antifraud/records?${q.toString()}`)
+  },
+  record: (id: number) => request<{ record: AntiFraudRecord }>(`/api/antifraud/records/${id}`),
+  approve: (id: number, body: { mute_seconds?: number; note?: string }) =>
+    request<{ ok: boolean; record: AntiFraudRecord }>(`/api/antifraud/records/${id}/approve`, {
+      method: 'POST',
+      body,
+    }),
+  reject: (id: number, note: string) =>
+    request<{ ok: boolean; record: AntiFraudRecord }>(`/api/antifraud/records/${id}/reject`, {
+      method: 'POST',
+      body: { note },
+    }),
+  remove: (id: number, stepUpToken: string) =>
+    request<{ ok: boolean }>(`/api/antifraud/records/${id}`, { method: 'DELETE', stepUpToken }),
 }

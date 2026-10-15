@@ -95,6 +95,7 @@ if err := ctx.Engine.RegisterSubtree(pluginpkg.SubtreeID("xxx"), subtree); err !
   - 业务数据优先用 `ctx.KV`（`database.PluginKVStore`），宿主按 pluginID 隔离，逻辑 key 无需再带插件前缀
 - 注册的 Pass/Pipeline 必须调用 `TrackPass`/`TrackPipeline`；Subtree 由 `Info().SubtreeID` 统一清理；自行注册到 `ToolReg` 的工具用 `TrackTool`（`Info().Tools` 中声明的工具由 Registry 自动跟踪）
 - 在 `internal/bizplugin/registry.go` 的 `RegisterBuiltins` 中追加注册分支，并在 `internal/config` 的 `PluginBuiltinsConfig` 增加对应开关（见 `internal/bizplugin/README.md` 第 4 节）；开关由 `[plugin.builtins]` 控制，配置为 false 或同名 Wasm 插件已加载时跳过注册
+- **撤回/禁言等动作**经 `PluginContext.Actions` 执行，不要自行构造 OneBot 动作；动作是否成功以平台响应的 `Status`/`RetCode` 为准，失败原因（如机器人无群管理权限）应原样记录而非自行推断
 - 插件 ID 规则：`^[a-z][a-z0-9_]{0,63}$`（小写字母开头，后接小写字母/数字/下划线，长度 ≤64，见 `internal/plugin/wasm_abi.go`）
 
 ### 3.4 可提供的资源
@@ -104,6 +105,8 @@ if err := ctx.Engine.RegisterSubtree(pluginpkg.SubtreeID("xxx"), subtree); err !
 | 斜杠命令 | `Info().Commands` 声明（`CommandDef{Name, Description, Order}`），命令名不含 `/`；Registry 在 OnInit 注册、卸载时自动注销 |
 | AI 工具 | `Info().Tools` 声明 `ToolDef{Name, Description, Parameters, Handler}`（Parameters 为 Eino `*schema.ParamsOneOf`），注册后 LLM 可调用 |
 | 行为树 Subtree | `Info().SubtreeID` + `OnInit` 中 `RegisterSubtree`，由 Registry 挂在主行为树插件分支（优先级高于核心分支） |
+| 消息观察者 | 实现 `plugin.MessageObserver`（`ObserveMessage(ctx *conduit.MessageContext)`）即可旁路观察每条消息；不参与行为树决策、不消费消息（子树一旦匹配成功会独占消息，只想旁路观察时必须用它）。回调内必须立即返回，只允许入队/计数等轻量操作，网络与数据库操作须转到插件自有协程 |
+| 出站动作 | `PluginContext.Actions`（`plugin.MessageActions`）：撤回消息、禁言群成员、主动发送文本（可指定群或私聊目标）、群内「@成员 + 文本」，返回平台动作响应以判断真实成败。为 nil 表示宿主未注入（如单测），插件应降级而不 panic |
 
 ## 4. WASM 插件规范
 
@@ -202,6 +205,7 @@ tinygo build -o signin.wasm -target wasi main.go
 | `answer_question` | `answer_question` | 命令（群抢答） | `/答题` | 题库目录 `[quiz].dir` |
 | `daily_quote` | `daily_quote` | 命令（外部一言 API） | `/每日一句` | 无 |
 | `random_beauty` | `random_beauty` | 命令（外部图片 API） | `/随机美图` | `RandomBeautyConfig`、视觉服务、对象存储 |
+| `antifraud` | `antifraud` | 消息观察者（每条群消息异步判定） | 无 | 反诈推理服务地址与阈值（`AntifraudConfig`）、出站动作能力、PostgreSQL（自管表 `antifraud_records`）；详见 [docs/anti-fraud.md](docs/anti-fraud.md) |
 
 另有 WASM 参考实现 `examples/plugin/signin`（与内置 `signin` 同名，动态加载时 Wasm 优先，内置实现自动跳过）。
 

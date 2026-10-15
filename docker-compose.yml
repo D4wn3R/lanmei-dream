@@ -80,6 +80,29 @@ services:
     ports:
       - "${NCM_API_PORT:-3000}:3000"
 
+  # 反诈推理服务（LanmeiAntiFraud）：可选，默认不启动，需 `--profile antifraud`。
+  # 镜像与构建上下文二选一：
+  #   - 已有镜像（离线分发）：make antifraud-image-load 导入后直接使用；
+  #   - 本地源码构建：LANMEI_ANTIFRAUD_DIR 指向 LanmeiAntiFraud 仓库（默认 ../LanmeiAntiFraud/LanmeiAntiFraud），
+  #     执行 `docker compose --profile antifraud build antifraud`。
+  # 刻意不映射宿主端口：模型服务自身无鉴权，只允许 compose 内网调用；需要外部访问时自行加反代与鉴权。
+  # 常驻内存约 3GB，首次启动加载模型约 10s（healthcheck 有 120s 启动宽限）。
+  antifraud:
+    image: ${LANMEI_ANTIFRAUD_IMAGE:-lanmei-antifraud:latest}
+    build:
+      context: ${LANMEI_ANTIFRAUD_DIR:-../LanmeiAntiFraud/LanmeiAntiFraud}
+      args:
+        TORCH_INDEX: ${LANMEI_ANTIFRAUD_TORCH_INDEX:-cpu}
+    profiles: ["antifraud"]
+    restart: unless-stopped
+    init: true
+    environment:
+      # 推理线程数（CPU 机型建议接近核数）；任务结果保留 1800s，够插件轮询与排障
+      LMAF_WORKERS: ${LANMEI_ANTIFRAUD_WORKERS:-4}
+      LMAF_TASK_TTL: "1800"
+    mem_limit: 4g
+    cpus: 4.0
+
   # 蓝妹 Bot 本体（由仓库根目录 Dockerfile 构建）：先加载 .env，再用 environment 覆盖容器内地址。
   lanmei:
     build: .
@@ -96,6 +119,9 @@ services:
       LANMEI_BOT_GATEWAY_ACCESS_TOKEN: ${LANMEI_BOT_GATEWAY_ACCESS_TOKEN:-}
       # 网易云点歌 API（ncm-api 服务，覆盖 config.toml 的 plugin.ncm_url）
       LANMEI_PLUGIN_NCM_URL: http://ncm-api:3000
+      # 反诈推理服务地址（antifraud 服务，需 --profile antifraud 启动；覆盖 config.toml 的 plugin.antifraud.endpoint）。
+      # 插件是否注册仍由 config.toml 的 [plugin.builtins].antifraud 决定，见 docs/anti-fraud.md
+      LANMEI_PLUGIN_ANTIFRAUD_ENDPOINT: ${LANMEI_PLUGIN_ANTIFRAUD_ENDPOINT:-http://antifraud:8000}
       # 点歌结果发送方式：auto = 发语音（record 段，点击即听，无需签名服务）；
       # 取不到音频时自动降级文字链接。card 需工具支持音乐签名，link 为纯文字。
       LANMEI_PLUGIN_MUSIC_SEND_MODE: auto

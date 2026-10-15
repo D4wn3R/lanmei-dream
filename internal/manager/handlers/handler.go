@@ -18,6 +18,7 @@ import (
 	"github.com/DaWesen/lanmei-dream/internal/ai/llm"
 	"github.com/DaWesen/lanmei-dream/internal/ai/prompt"
 	"github.com/DaWesen/lanmei-dream/internal/ai/skill"
+	"github.com/DaWesen/lanmei-dream/internal/bizplugin/antifraud"
 	"github.com/DaWesen/lanmei-dream/internal/bot"
 	"github.com/DaWesen/lanmei-dream/internal/command"
 	"github.com/DaWesen/lanmei-dream/internal/kb"
@@ -48,6 +49,7 @@ type Handler struct {
 	knowledge *kb.Service      // 知识库系统（内容管理；nil = 未启用）
 	wasm      *plugin.WasmManager // Wasm 插件管理器（nil = 未启用）
 	commands  *command.System  // 命令系统（只读展示）
+	antifraud *antifraud.Plugin // 反诈插件（违规记录与审批；nil = 未启用）
 }
 
 // Options Handler 依赖注入参数。
@@ -66,6 +68,7 @@ type Options struct {
 	Knowledge *kb.Service
 	Wasm      *plugin.WasmManager
 	Commands  *command.System
+	AntiFraud *antifraud.Plugin
 }
 
 // New 创建 Handler。
@@ -90,6 +93,7 @@ func New(opts Options) *Handler {
 		knowledge: opts.Knowledge,
 		wasm:      opts.Wasm,
 		commands:  opts.Commands,
+		antifraud: opts.AntiFraud,
 	}
 }
 

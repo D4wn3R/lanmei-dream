@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unicode"
 
 	"github.com/lxzan/gws"
@@ -58,6 +60,12 @@ func (c *Connection) SetImpl(impl string) {
 type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]*Connection
+
+	// pending 是 echo → 等待通道的登记表，仅 SendToWait 的调用方在此等待，
+	// 由 ResolveActionResponse 投递；为空表示无人等待响应。
+	pendingMu sync.Mutex
+	pending   map[string]chan ActionResponse
+	echoSeq   atomic.Uint64
 }
 
 // NewHub 创建连接管理中心。
@@ -117,6 +125,72 @@ func (h *Hub) SendTo(connID string, req *ActionRequest) error {
 		return fmt.Errorf("gateway: 连接 %s 不存在", connID)
 	}
 	return writeJSON(conn.Socket, req)
+}
+
+// SendToWait 发送动作请求并等待同 Echo 的响应，用于需要确认真实成败的动作（撤回 / 禁言）。
+//
+// 参数：
+//   - connID：目标连接 ID
+//   - req：动作请求；Echo 为空时自动生成
+//   - timeout：等待响应的最长时间
+//
+// 返回：平台动作响应；连接不存在、写帧失败或超时返回错误。
+//
+// 注意：平台不回报该动作时不区分「未支持」与「未处理」，一律走超时错误；
+// 超时只代表本端未收到响应，动作可能已生效，调用方不应据此重试补偿。
+func (h *Hub) SendToWait(connID string, req *ActionRequest, timeout time.Duration) (*ActionResponse, error) {
+	if req.Echo == "" {
+		req.Echo = fmt.Sprintf("lanmei-%d-%d", time.Now().UnixNano(), h.echoSeq.Add(1))
+	}
+	ch := make(chan ActionResponse, 1)
+	h.pendingMu.Lock()
+	if h.pending == nil {
+		h.pending = make(map[string]chan ActionResponse)
+	}
+	h.pending[req.Echo] = ch
+	h.pendingMu.Unlock()
+	defer func() {
+		h.pendingMu.Lock()
+		delete(h.pending, req.Echo)
+		h.pendingMu.Unlock()
+	}()
+
+	if err := h.SendTo(connID, req); err != nil {
+		return nil, err
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case resp := <-ch:
+		return &resp, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("gateway: 动作 %s 等待响应超时（%s）", req.Action, timeout)
+	}
+}
+
+// ResolveActionResponse 把平台动作响应投递给等待中的 SendToWait 调用方。
+//
+// 参数：
+//   - echo：响应携带的请求标识
+//   - resp：动作响应
+//
+// 返回：存在等待者并投递成功时为 true；无等待者（普通发消息响应、重复响应）返回 false。
+func (h *Hub) ResolveActionResponse(echo string, resp *ActionResponse) bool {
+	if echo == "" || resp == nil {
+		return false
+	}
+	h.pendingMu.Lock()
+	ch, ok := h.pending[echo]
+	h.pendingMu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- *resp:
+	default: // 等待者已收到响应（重复回包），丢弃
+	}
+	return true
 }
 
 // SendMessageTo 向指定连接发送文本消息（自动选择协议动作）。

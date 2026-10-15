@@ -108,6 +108,7 @@ music = true       # 网易云点歌插件
 sticker = true     # 自定义表情库插件
 turtle_soup = true # 海龟汤文字游戏插件
 random_beauty = true # 严格安全审核的 Pixiv 随机美图插件
+antifraud = true # 反诈插件（需同时配置 [plugin.antifraud].endpoint，见 docs/anti-fraud.md）
 # 未列出的开关取代码默认值：answer_question（编程答题）、daily_quote（每日一句）默认开启，
 # 其余未列出的内置插件默认关闭。
 
@@ -132,6 +133,48 @@ safe_confidence = 0.9
 moderation_timeout_seconds = 8
 # 未列出的键取代码默认值：pool_init_size=100（图池种子目标张数，夹在 10~500）、
 # refill_moderation_timeout_seconds=25（补图单张审核含上传预算，夹在 5~30）。
+
+# 反诈插件：把消息异步送 LanmeiAntiFraud 推理服务判定，高置信度违规自动撤回+禁言并上报，
+# 中置信度入库并上报，由管理员在管理面板审批。判定全程在插件自有协程中执行，不阻塞消息管线。
+# 完整部署与调优说明见 docs/anti-fraud.md；未列出的键取代码默认值（见 internal/config/config.go）。
+[plugin.antifraud]
+# 推理服务地址（如 http://antifraud:8000）；为空即使开关打开也不注册插件
+endpoint = ""
+# 自动处置阈值：违规分（1 - P(正常)）达到该值自动撤回+禁言并上报
+auto_threshold = 0.9
+# 上报阈值：达到该值入库并上报管理员，等人工审批；低于该值不记录
+report_threshold = 0.6
+# 自动处置的禁言时长（秒），默认 1 小时；0 表示自动处置不禁言（只撤回并上报）
+mute_seconds = 3600
+# 参与判定的最短文本长度（rune），过短的消息（如"在吗"）不判定
+min_chars = 4
+# 是否判定私聊消息；默认只判定群聊
+monitor_private = false
+# 判定范围：group_whitelist 非空时只判定白名单内的群；group_blacklist 内的群永不判定
+group_whitelist = []
+group_blacklist = []
+# 跳过超管与动态管理员的消息（避免误伤管理操作），默认开启
+skip_super_users = true
+# 入库与送判的文本上限（rune），超出部分截断
+max_content_chars = 1000
+
+# 限流与队列（保护推理服务与消息主流程）
+user_cooldown_seconds = 10 # 同一用户两次判定的最小间隔；冷却期内不再判定
+queue_size = 256 # 待判定队列长度，满则丢弃并计数
+batch_size = 16 # 单次提交的最大文本数
+batch_window_millis = 200 # 聚合窗口（毫秒）：攒批最多等这么久
+max_batches_per_second = 2 # 提交速率上限（批/秒）
+request_timeout_seconds = 8 # 单批判定总预算（含轮询，秒）
+cache_ttl_seconds = 600 # 相同文本的判决缓存；命中的文本不再调用模型
+dedup_window_seconds = 120 # 同用户同文本的记录合并窗口，避免刷屏式重复入库
+circuit_failures = 5 # 连续失败多少次后熔断（暂停调用）
+circuit_open_seconds = 60 # 熔断持续秒数
+
+# 上报：违规记录私聊超管与动态管理员，并（可选）发到告警群
+notice_group_id = "" # 反诈告警群 ID；为空时只私聊管理员
+panel_base_url = "" # 管理面板地址（如 https://panel.example.com），用于上报中的记录链接
+# 违规记录保留天数；0 表示永久保留
+retention_days = 90
 
 # 管理面板服务。
 # 认证敏感配置（LANMEI_MANAGER_ADMIN_USERNAME / LANMEI_MANAGER_ADMIN_PASSWORD / LANMEI_MANAGER_SECRET_KEY）
