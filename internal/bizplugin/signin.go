@@ -242,7 +242,7 @@ type signinResult struct {
 	Points      int // 本次获得积分，已签到时为 0
 	TotalPoints int
 	Event       string
-	Rank        int    // 当前积分排名，-1 表示未上榜
+	Rank        int    // 当前积分排名，-1 表示未上榜（排行榜全量保留后仅异常时出现）
 	Mode        string // "normal" 或 "random"
 }
 
@@ -254,12 +254,11 @@ const (
 	// 受限 KV 键（命名空间 kvPluginID，PostgreSQL 持久化、重启不丢）：
 	//   state:<userID>:date  最后签到日期（"2006-01-02"）
 	//   state:<userID>:total 累计积分
-	//   leaderboard          排行榜 JSON（leaderboardEntry 数组）
+	//   leaderboard          排行榜 JSON（leaderboardEntry 数组，全量保留不截断）
 	kvPluginID         = "signin"
 	kvSigninStateDate  = "state:%s:date"
 	kvSigninStateTotal = "state:%s:total"
 	kvLeaderboardKey   = "leaderboard"
-	leaderboardCap     = 100 // 排行榜最大条目数
 )
 
 // leaderboardEntry 排行榜条目。
@@ -302,13 +301,13 @@ func updateLeaderboard(kv *database.PluginKVStore, ctx context.Context, userID, 
 		})
 	}
 
+	// 同分按用户 ID 升序做稳定 tie-break，避免同分用户名次随机互换
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].TotalPoints > entries[j].TotalPoints
+		if entries[i].TotalPoints != entries[j].TotalPoints {
+			return entries[i].TotalPoints > entries[j].TotalPoints
+		}
+		return entries[i].UserID < entries[j].UserID
 	})
-
-	if len(entries) > leaderboardCap {
-		entries = entries[:leaderboardCap]
-	}
 
 	out, _ := json.Marshal(entries)
 	_ = kv.Set(ctx, kvPluginID, kvLeaderboardKey, string(out))
@@ -329,6 +328,8 @@ func getLeaderboard(kv *database.PluginKVStore, ctx context.Context) []leaderboa
 }
 
 // getRank 查询用户在当前排行榜中的排名（1 起），不在榜内返回 -1。
+// 排行榜全量保留所有签到用户，正常签到流程内必然在榜；
+// -1 仅在 KV 异常或历史数据残缺时出现，由调用方兜底展示。
 func getRank(kv *database.PluginKVStore, ctx context.Context, userID string) int {
 	entries := getLeaderboard(kv, ctx)
 	for i, e := range entries {
@@ -482,6 +483,14 @@ func (pass *signinNormalExecutePass) Execute(ctx *conduit.MessageContext) error 
 	return nil
 }
 
+// rankDisplay 名次展示文案；-1（未上榜）只会在 KV 异常或历史数据残缺时出现。
+func rankDisplay(rank int) string {
+	if rank > 0 {
+		return fmt.Sprintf("第%d位", rank)
+	}
+	return "未上榜"
+}
+
 // signinNormalReplyPass 组装普通签到回复消息
 type signinNormalReplyPass struct{}
 
@@ -501,11 +510,11 @@ func (pass *signinNormalReplyPass) Execute(ctx *conduit.MessageContext) error {
 
 	var content string
 	if result.TodaySigned {
-		content = fmt.Sprintf("今天已经签到过了，请明天再来吧~\n目前你积分为%d\n排名第%d位",
-			result.TotalPoints, result.Rank)
+		content = fmt.Sprintf("今天已经签到过了，请明天再来吧~\n目前你积分为%d\n排名%s",
+			result.TotalPoints, rankDisplay(result.Rank))
 	} else {
-		content = fmt.Sprintf("签到成功，%s。\n目前你积分为%d\n排名第%d位",
-			result.Event, result.TotalPoints, result.Rank)
+		content = fmt.Sprintf("签到成功，%s。\n目前你积分为%d\n排名%s",
+			result.Event, result.TotalPoints, rankDisplay(result.Rank))
 	}
 
 	conduit.AppendOutput(ctx, &conduit.Message{
@@ -598,11 +607,11 @@ func (pass *signinRandomReplyPass) Execute(ctx *conduit.MessageContext) error {
 
 	var content string
 	if result.TodaySigned {
-		content = fmt.Sprintf("今天已经签到过了，请明天再来吧~\n目前你积分为%d\n排名第%d位",
-			result.TotalPoints, result.Rank)
+		content = fmt.Sprintf("今天已经签到过了，请明天再来吧~\n目前你积分为%d\n排名%s",
+			result.TotalPoints, rankDisplay(result.Rank))
 	} else {
-		content = fmt.Sprintf("签到成功，%s。\n目前你积分为%d\n排名第%d位",
-			result.Event, result.TotalPoints, result.Rank)
+		content = fmt.Sprintf("签到成功，%s。\n目前你积分为%d\n排名%s",
+			result.Event, result.TotalPoints, rankDisplay(result.Rank))
 	}
 
 	conduit.AppendOutput(ctx, &conduit.Message{
