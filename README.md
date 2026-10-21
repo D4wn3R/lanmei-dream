@@ -174,6 +174,7 @@ config/              → 运行时配置（config.toml / skills.toml / onebots /
 prompts/             → 模块化提示词（system_persona / assembly_template 等）
 skills/              → 技能目录（divination / word_guess 等）
 quizdata/            → 编程答题题库（按语言分目录，JSON 外部化，热更新）
+knowledge-base/      → 知识库语料（本地 provider 的 docs_dir，Markdown / CSV 自动同步）
 schema/plugin/       → Wasm 插件 WIT 接口定义
 docs/                → 架构图与数据流文档
 ```

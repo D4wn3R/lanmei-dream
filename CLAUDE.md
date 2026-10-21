@@ -53,7 +53,8 @@ manager/             → 管理面板前端（Vue 3 + Vite + TDesign）
 config/              → 运行时配置（config.toml、skills.toml、onebots/napcat 配置）
 prompts/ skills/ quizdata/ → Prompt 片段、技能、编程答题题库
 schema/plugin/       → Wasm 插件 WIT 接口定义
-docs/                → 架构与数据流文档
+knowledge-base/      → 知识库语料（本地 provider 的 docs_dir，Markdown / CSV）
+docs/                → 架构与数据流文档（仅供开发者阅读，不做 RAG 语料）
 ```
 
 ## 约定

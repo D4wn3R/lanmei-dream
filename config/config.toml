@@ -241,11 +241,11 @@ enabled = true
 recall_limit = 5                    # 单模式召回上限
 
 [knowledge.bases.config]
-docs_dir = "./docs"                 # 知识文件目录（相对程序运行目录），支持 .md 与 .csv
+docs_dir = "./knowledge-base"       # 知识文件目录（相对程序运行目录），支持 .md 与 .csv；knowledge-base/ 专存知识语料，勿指向 docs/（那里是开发文档）
 fuzzy_threshold = 0.1               # 模糊召回最低相似度阈值
 # CSV 规则表说明：
 #   与飞书表格结构同构：A 列=关键词、B 列=回复（C 列匹配形式忽略），每行一条知识。
-#   CSV 放入 docs_dir（如 docs/rules.csv）后启动或"重新同步"即自动摄入，
+#   CSV 放入 docs_dir（如 knowledge-base/rules.csv）后启动或"重新同步"即自动摄入，
 #   检索命中后由 LLM 组织回答（即"AI检索"行为）。
 csv_skip_header = true              # 是否跳过 CSV 首行表头
 
